@@ -126,4 +126,68 @@ describe('measurementSession Utilities', () => {
       expect(formatDistance(10450)).toBe('10.45 km')
     })
   })
+
+  describe('Dururken Ölçüm Başlatma ve 0 km/sa Senaryoları', () => {
+    it('1. Dururken 0 km/sa: Geçerli 0 değeri Yeni Ölçüm ile kaydedilebilir ve falsy olarak reddedilmez', () => {
+      const speedKmh = 0
+      const gpsStatus = 'aktif'
+      const isStale = false
+
+      // canSaveMeasurement 0 değerini geçerli kabul etmelidir
+      expect(canSaveMeasurement(speedKmh, gpsStatus, isStale)).toBe(true)
+
+      // createSavedMeasurement 0 değerini hatasız nesneye dönüştürür
+      const record = createSavedMeasurement(1, speedKmh)
+      expect(record.id).toBe(1)
+      expect(record.speedKmh).toBe(0)
+
+      // updateSessionStats 0 değerini istatistiklere işler
+      const stats = updateSessionStats(INITIAL_SESSION_STATS, 0, 0)
+      expect(stats.maxSpeedKmh).toBe(0)
+      expect(stats.avgSpeedKmh).toBe(0)
+      expect(stats.distanceMeters).toBe(0)
+      expect(stats.speedSamplesCount).toBe(1)
+    })
+
+    it('2. Hareket hâlinde geçerli hız: Araç ve yürüyüş hızları Yeni Ölçüm ile kaydedilir', () => {
+      // 54 km/sa araç hızı
+      expect(canSaveMeasurement(54, 'aktif', false)).toBe(true)
+      const recordCar = createSavedMeasurement(1, 54)
+      expect(recordCar.speedKmh).toBe(54)
+
+      // 1.8 km/sa yavaş yürüyüş hızı
+      expect(canSaveMeasurement(1.8, 'aktif', false)).toBe(true)
+      const recordWalk = createSavedMeasurement(2, 1.8)
+      expect(recordWalk.speedKmh).toBe(1.8)
+    })
+
+    it('3. GPS verisi yok / bayat / geçersiz: Asla 0 olarak kaydedilmez, canSaveMeasurement reddeder', () => {
+      // GPS hız verisi null (ilk konum alınıyor veya sinyal yok)
+      expect(canSaveMeasurement(null, 'aktif', false)).toBe(false)
+
+      // GPS verisi bayatlamış (tünel, sinyal kaybı)
+      expect(canSaveMeasurement(0, 'aktif', true)).toBe(false)
+      expect(canSaveMeasurement(50, 'aktif', true)).toBe(false)
+
+      // GPS henüz aranıyor veya durdurulmuş
+      expect(canSaveMeasurement(0, 'bekleniyor', false)).toBe(false)
+      expect(canSaveMeasurement(0, 'durduruldu', false)).toBe(false)
+
+      // Geçersiz değerler (NaN, negatif)
+      expect(canSaveMeasurement(NaN, 'aktif', false)).toBe(false)
+      expect(canSaveMeasurement(-1, 'aktif', false)).toBe(false)
+    })
+
+    it('4. Yeni Ölçüm sonrası oturum sıfırlama: İstatistikler sıfırlanır ancak kayıtlı geçmiş korunur', () => {
+      let stats = updateSessionStats(INITIAL_SESSION_STATS, 60, 200)
+      expect(stats.maxSpeedKmh).toBe(60)
+
+      // Oturum sıfırlanır
+      stats = resetSessionStats()
+      expect(stats.maxSpeedKmh).toBeNull()
+      expect(stats.avgSpeedKmh).toBeNull()
+      expect(stats.distanceMeters).toBe(0)
+      expect(stats.speedSamplesCount).toBe(0)
+    })
+  })
 })

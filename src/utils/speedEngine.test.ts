@@ -365,5 +365,85 @@ describe('GpsSpeedTracker Sınıfı ve Oturum Yönetimi', () => {
     expect(tracker.getPreviousPoint()).toBeNull()
     expect(tracker.getSpeedSource()).toBe('none')
   })
+
+  it('GpsSpeedTracker: 2.5 km/sa altındaki yavaş yürüyüşü korur ve donanım gürültüsünü süzer', () => {
+    const tracker = new GpsSpeedTracker()
+
+    // 0.2 m/s (~0.7 km/sa) donanım gürültüsü -> 0 km/sa'e sıfırlanır
+    const noiseRes = tracker.processReading({
+      coords: { latitude: 41.0, longitude: 28.0, speed: 0.2 },
+      timestamp: 1000,
+    })
+    expect(noiseRes.speedKmh).toBe(0)
+    expect(tracker.getCurrentSpeedKmh()).toBe(0)
+
+    // 0.5 m/s (1.8 km/sa) gerçek yürüyüş hızı -> korunur, sıfırlanmaz
+    const walkRes = tracker.processReading({
+      coords: { latitude: 41.00001, longitude: 28.0, speed: 0.5 },
+      timestamp: 2000,
+    })
+    expect(walkRes.speedKmh).toBe(1.8)
+    expect(tracker.getCurrentSpeedKmh()).toBe(1.8)
+  })
+
+  it('Dururken Başlatma: coords.speed = 0 olduğunda ilk okumada anında 0 km/sa üretir', () => {
+    const tracker = new GpsSpeedTracker()
+
+    // Kullanıcı dururken Başlat'a bastı; GPS donanımı 0 m/s hız gönderdi
+    const firstReading = tracker.processReading({
+      coords: { latitude: 41.0082, longitude: 28.9784, speed: 0, accuracy: 10 },
+      timestamp: 1000,
+    })
+
+    expect(firstReading.speedKmh).toBe(0)
+    expect(firstReading.source).toBe('gps')
+    expect(tracker.getCurrentSpeedKmh()).toBe(0)
+  })
+
+  it('Dururken Başlatma (coords.speed = null): İlk veride sahte 0 üretmez (null döner), ikinci veride 0 km/sa döner', () => {
+    const tracker = new GpsSpeedTracker()
+
+    // 1. Okuma: Donanım hız bildiremiyor (null). Önceki konum olmadığı için hız null olmalı, sahte 0 üretilmemelidir.
+    const res1 = tracker.processReading({
+      coords: { latitude: 41.0082, longitude: 28.9784, speed: null, accuracy: 15 },
+      timestamp: 1000,
+    })
+    expect(res1.speedKmh).toBeNull()
+    expect(res1.source).toBe('none')
+
+    // 2. Okuma (1 saniye sonra): Kullanıcı tamamen hareketsiz, koordinat aynı.
+    // Haversine ile hesaplanan hız 0 km/sa olur.
+    const res2 = tracker.processReading({
+      coords: { latitude: 41.0082, longitude: 28.9784, speed: null, accuracy: 15 },
+      timestamp: 2000,
+    })
+    expect(res2.speedKmh).toBe(0)
+    expect(res2.source).toBe('haversine')
+    expect(tracker.getCurrentSpeedKmh()).toBe(0)
+  })
+
+  it('Yeni Ölçüm (kesintisiz takip): Aktif oturumda Yeni Ölçüm yapıldığında hız motoru sıfırlanmaz, 0 km/sa kesintisiz devam eder', () => {
+    const tracker = new GpsSpeedTracker()
+
+    // Dururken ilk iki okuma
+    tracker.processReading({
+      coords: { latitude: 41.0082, longitude: 28.9784, speed: null, accuracy: 15 },
+      timestamp: 1000,
+    })
+    const res2 = tracker.processReading({
+      coords: { latitude: 41.0082, longitude: 28.9784, speed: null, accuracy: 15 },
+      timestamp: 2000,
+    })
+    expect(res2.speedKmh).toBe(0)
+
+    // Yeni Ölçüm butonuna basıldı: Oturum istatistikleri sıfırlanır, fakat canlı tracker sıfırlanmaz
+    // Bir sonraki okumada önceki nokta kaybolmadığı için hız null'a ('--') düşmez, 0 km/sa devam eder
+    const resAfterRecord = tracker.processReading({
+      coords: { latitude: 41.0082, longitude: 28.9784, speed: null, accuracy: 15 },
+      timestamp: 3000,
+    })
+    expect(resAfterRecord.speedKmh).toBe(0)
+    expect(tracker.getCurrentSpeedKmh()).toBe(0)
+  })
 })
 

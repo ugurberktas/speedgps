@@ -1,7 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { GpsSpeedTracker, type SpeedSource } from './utils/speedEngine'
 import { calculateHaversineDistance, type Coordinates } from './utils/gpsMath'
-import { GPS_RELIABILITY_CONFIG } from './utils/gpsReliability'
+import {
+  GPS_RELIABILITY_CONFIG,
+  isReliableGpsReading,
+  isValidTimestampSequence,
+  type GpsReliabilityCheckInput,
+} from './utils/gpsReliability'
 import {
   type SavedMeasurement,
   type SessionStats,
@@ -109,14 +114,6 @@ function App() {
     try {
       const id = navigator.geolocation.watchPosition(
         (position) => {
-          setGpsStatus('aktif')
-          setErrorMessage(null)
-
-          const currentCoords: Coordinates = {
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          }
-
           const timestamp =
             typeof position.timestamp === 'number' &&
             Number.isFinite(position.timestamp) &&
@@ -124,8 +121,12 @@ function App() {
               ? position.timestamp
               : Date.now()
 
-          // Hız motoru ile hızı hesapla (doğruluk, koordinat ve zaman kontrolleri dahil)
-          const result = trackerRef.current.processReading({
+          const currentCoords: Coordinates = {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          }
+
+          const readingInput: GpsReliabilityCheckInput = {
             coords: {
               latitude: position.coords.latitude,
               longitude: position.coords.longitude,
@@ -133,29 +134,56 @@ function App() {
               speed: position.coords.speed,
             },
             timestamp,
-          })
+          }
 
-          // Yalnızca geçerli ve güvenilir bir hız üretilmişse istatistikleri ve mesafeyi güncelle
+          // Yalnızca kabul edilen, geçerli konum okumalarında güncellik zaman damgasını yenile
+          const prevTimestamp = trackerRef.current.getPreviousPoint()?.timestamp
+          const isAcceptedReading =
+            isReliableGpsReading(readingInput) &&
+            isValidTimestampSequence(prevTimestamp, timestamp)
+
+          if (!isAcceptedReading) {
+            // Geçersiz / güvenilmez okuma: güncellik zaman damgası YENİLENMEZ
+            setSpeedKmh(null)
+            setSpeedSource('none')
+            return
+          }
+
+          // Kabul edilen okuma: güncellik zaman damgasını yenile ve bayatlığı kaldır
+          setGpsStatus('aktif')
+          setErrorMessage(null)
+          lastFixTimestampRef.current = Date.now()
+          setIsStale(false)
+
+          // Hız motoru ile hızı hesapla (doğruluk, koordinat ve zaman kontrolleri dahil)
+          const result = trackerRef.current.processReading(readingInput)
+
+          // Yalnızca geçerli bir hız üretilmişse istatistikleri ve mesafeyi güncelle
           if (result.speedKmh !== null) {
-            lastFixTimestampRef.current = Date.now()
-            setIsStale(false)
             setSpeedSource(result.source)
             setSpeedKmh(result.speedKmh)
 
             let deltaMeters = 0
             if (lastCoordsRef.current) {
               const dist = calculateHaversineDistance(lastCoordsRef.current, currentCoords)
-              if (dist !== null && dist > 0) {
+              // Sabit konum titremesi: mesafe eşiği altındaysa veya hız 0 ise yapay mesafe ekleme
+              if (
+                dist !== null &&
+                dist >= GPS_RELIABILITY_CONFIG.STATIONARY_DISTANCE_THRESHOLD_METERS &&
+                result.speedKmh > 0
+              ) {
                 deltaMeters = dist
+                lastCoordsRef.current = currentCoords
               }
+            } else {
+              lastCoordsRef.current = currentCoords
             }
-            lastCoordsRef.current = currentCoords
 
             setSessionStats((prev) =>
               updateSessionStats(prev, result.speedKmh, deltaMeters)
             )
           } else {
-            // Güvenilmez veya reddedilen okumada ekranı null tut, sahte hız gösterme
+            // Henüz ilk okuma veya hesaplanma aşamasında sahte 0 gösterme, null tut
             setSpeedKmh(null)
             setSpeedSource('none')
           }
@@ -253,7 +281,6 @@ function App() {
     // 3. Mevcut oturum istatistiklerini sıfırla; eski konum örneklerini yeni oturuma karıştırma
     setSessionStats(resetSessionStats())
     setElapsedSeconds(0)
-    trackerRef.current.reset()
     lastCoordsRef.current = null
 
     setFeedbackNotice(
@@ -325,7 +352,7 @@ function App() {
           {gpsStatus === 'durduruldu' && 'Ölçümü başlatmak için Başlat butonuna basın.'}
           {gpsStatus === 'bekleniyor' && 'GPS sinyali aranıyor...'}
           {gpsStatus === 'aktif' && isStale && 'GPS sinyali bekleniyor (güncelleme kesildi)...'}
-          {gpsStatus === 'aktif' && !isStale && speedKmh === null && 'Konum alınıyor, hız hesaplanıyor...'}
+          {gpsStatus === 'aktif' && !isStale && speedKmh === null && 'GPS sinyali bekleniyor (hız hesaplanıyor)...'}
           {gpsStatus === 'aktif' && !isStale && speedKmh !== null && (
             <span>
               Canlı ölçüm güncelleniyor ({speedSource === 'haversine' ? 'Haversine hesabı' : 'GPS donanımı'})

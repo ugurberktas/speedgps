@@ -11,6 +11,7 @@
 
 import {
   type GpsPoint,
+  calculateHaversineDistance,
   calculateSpeedBetweenPoints,
   msToKmh,
 } from './gpsMath'
@@ -18,6 +19,7 @@ import {
   isReliableGpsReading,
   isValidTimestampSequence,
 } from './gpsReliability'
+import { SpeedFilter } from './speedFilter'
 
 export type SpeedSource = 'gps' | 'haversine' | 'none'
 
@@ -129,12 +131,18 @@ export function resolveSpeed(
 /**
  * GPS Hız Takipçisi (Stateful Tracker)
  * Ölçüm oturumu boyunca önceki konumu, hızı ve kaynağı takip eder.
+ * Anormal sıçramaları eler, durgunluk titremesini süzer ve yumuşatma uygular.
  * Durdurulduğunda, yeniden başlatıldığında veya hata oluştuğunda reset() ile geçmişi temizler.
  */
 export class GpsSpeedTracker {
   private previousPoint: GpsPoint | null = null
   private speedSource: SpeedSource = 'none'
   private currentSpeedKmh: number | null = null
+  private speedFilter: SpeedFilter = new SpeedFilter()
+
+  public getSpeedFilter(): SpeedFilter {
+    return this.speedFilter
+  }
 
   public getPreviousPoint(): GpsPoint | null {
     return this.previousPoint
@@ -149,17 +157,53 @@ export class GpsSpeedTracker {
   }
 
   public processReading(reading: GpsReadingInput): SpeedCalculationResult {
-    const result = resolveSpeed(reading, this.previousPoint)
-    this.previousPoint = result.newPoint
-    this.speedSource = result.source
-    this.currentSpeedKmh = result.speedKmh
-    return result
+    const prevPointBefore = this.previousPoint
+    const rawResult = resolveSpeed(reading, this.previousPoint)
+    this.previousPoint = rawResult.newPoint
+    this.speedSource = rawResult.source
+
+    if (rawResult.speedKmh === null) {
+      this.currentSpeedKmh = null
+      return rawResult
+    }
+
+    const timeDeltaSeconds =
+      prevPointBefore && reading.timestamp > prevPointBefore.timestamp
+        ? (reading.timestamp - prevPointBefore.timestamp) / 1000
+        : 1.0
+
+    let distanceMeters: number | null = null
+    if (prevPointBefore) {
+      distanceMeters = calculateHaversineDistance(prevPointBefore, {
+        latitude: reading.coords.latitude,
+        longitude: reading.coords.longitude,
+      })
+    }
+
+    const filterResult = this.speedFilter.filter(rawResult.speedKmh, {
+      source: rawResult.source,
+      timeDeltaSeconds,
+      distanceMeters,
+    })
+
+    this.currentSpeedKmh = filterResult.filteredSpeedKmh
+
+    return {
+      speedKmh: filterResult.filteredSpeedKmh,
+      speedMs:
+        filterResult.filteredSpeedKmh !== null
+          ? Math.round((filterResult.filteredSpeedKmh / 3.6) * 100) / 100
+          : null,
+      source: rawResult.source,
+      newPoint: rawResult.newPoint,
+    }
   }
 
   public reset(): void {
     this.previousPoint = null
     this.speedSource = 'none'
     this.currentSpeedKmh = null
+    this.speedFilter.reset()
   }
 }
 
