@@ -15,6 +15,8 @@ export interface SessionStats {
   speedSamplesCount: number
   speedSamplesSum: number
   distanceMeters: number
+  totalDurationSeconds?: number
+  weightedSpeedSum?: number
 }
 
 export const INITIAL_SESSION_STATS: SessionStats = {
@@ -23,6 +25,8 @@ export const INITIAL_SESSION_STATS: SessionStats = {
   speedSamplesCount: 0,
   speedSamplesSum: 0,
   distanceMeters: 0,
+  totalDurationSeconds: 0,
+  weightedSpeedSum: 0,
 }
 
 /**
@@ -71,13 +75,14 @@ export function formatDistance(meters: number): string {
 export function canSaveMeasurement(
   speedKmh: number | null,
   gpsStatus: string,
-  isStale: boolean = false
+  isStale: boolean = false,
+  isPaused: boolean = false
 ): boolean {
   if (gpsStatus !== 'aktif') {
     return false
   }
 
-  if (isStale) {
+  if (isStale || isPaused) {
     return false
   }
 
@@ -107,12 +112,57 @@ export function createSavedMeasurement(
 }
 
 /**
+ * Ortalama hızı (km/sa) hesaplar.
+ * Zaman ağırlıklı toplam hız ve geçerli aktif süreye dayanır.
+ * Geçerli 0 km/sa ölçümleri ortalamaya dahil edilir (kırmızı ışık, duraklama vb.).
+ */
+export function calculateAverageSpeed(
+  weightedSpeedSum: number,
+  totalDurationSeconds: number
+): number | null {
+  if (!Number.isFinite(totalDurationSeconds) || totalDurationSeconds <= 0) {
+    return null
+  }
+
+  if (!Number.isFinite(weightedSpeedSum) || weightedSpeedSum < 0) {
+    return 0
+  }
+
+  const avg = weightedSpeedSum / totalDurationSeconds
+  return Math.round(avg * 10) / 10
+}
+
+/**
+ * Toplam mesafe (metre) ve geçerli ölçüm süresi (saniye) üzerinden
+ * ortalama hızı (km/sa) hesaplar (v = d / t * 3.6).
+ * Ölçüm süresi ve mesafe ile tam tutarlılık sağlar.
+ */
+export function calculateAverageSpeedFromDistance(
+  distanceMeters: number,
+  durationSeconds: number
+): number | null {
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    return null
+  }
+
+  if (!Number.isFinite(distanceMeters) || distanceMeters <= 0) {
+    return 0
+  }
+
+  const speedKmh = (distanceMeters / durationSeconds) * 3.6
+  return Math.round(speedKmh * 10) / 10
+}
+
+/**
  * Canlı hız ve mesafe farkı ile oturum istatistiklerini günceller.
+ * Düzensiz GPS örnekleme aralıkları (timeDeltaSeconds) verildiğinde
+ * zaman ağırlıklı hız hesabı uygular; duraklamaları (0 km/sa) doğru ağırlıkla yansıtır.
  */
 export function updateSessionStats(
   prevStats: SessionStats,
   currentSpeedKmh: number | null,
-  distanceDeltaMeters: number
+  distanceDeltaMeters: number,
+  timeDeltaSeconds?: number
 ): SessionStats {
   const validDistanceDelta =
     Number.isFinite(distanceDeltaMeters) && distanceDeltaMeters > 0
@@ -133,9 +183,28 @@ export function updateSessionStats(
       ? Math.max(prevStats.maxSpeedKmh, currentSpeedKmh)
       : currentSpeedKmh
 
+  // Geçerli zaman aralığı (saniye): belirtilmemişse 1.0 saniye (1 Hz) kabul edilir
+  const validDt =
+    typeof timeDeltaSeconds === 'number' && Number.isFinite(timeDeltaSeconds) && timeDeltaSeconds > 0
+      ? timeDeltaSeconds
+      : 1.0
+
   const nextCount = prevStats.speedSamplesCount + 1
   const nextSum = prevStats.speedSamplesSum + currentSpeedKmh
-  const nextAvg = Math.round((nextSum / nextCount) * 10) / 10
+
+  const prevDuration =
+    typeof prevStats.totalDurationSeconds === 'number'
+      ? prevStats.totalDurationSeconds
+      : prevStats.speedSamplesCount
+
+  const prevWeightedSum =
+    typeof prevStats.weightedSpeedSum === 'number'
+      ? prevStats.weightedSpeedSum
+      : prevStats.speedSamplesSum
+
+  const nextDuration = prevDuration + validDt
+  const nextWeightedSum = prevWeightedSum + currentSpeedKmh * validDt
+  const nextAvg = calculateAverageSpeed(nextWeightedSum, nextDuration)
 
   return {
     maxSpeedKmh: nextMax,
@@ -143,6 +212,8 @@ export function updateSessionStats(
     speedSamplesCount: nextCount,
     speedSamplesSum: nextSum,
     distanceMeters: nextDistance,
+    totalDurationSeconds: nextDuration,
+    weightedSpeedSum: nextWeightedSum,
   }
 }
 
@@ -152,3 +223,19 @@ export function updateSessionStats(
 export function resetSessionStats(): SessionStats {
   return { ...INITIAL_SESSION_STATS }
 }
+
+/**
+ * Kaydedilen ölçüm geçmişini metin özeti olarak formatlar.
+ */
+export function formatHistorySummary(items: SavedMeasurement[]): string {
+  if (!items || items.length === 0) {
+    return ''
+  }
+
+  const lines = items.map(
+    (item) => `#${item.id} | Saat: ${item.time} | Hız: ${item.speedKmh.toFixed(1)} km/sa`
+  )
+
+  return `SpeedGPS Ölçüm Özeti (${items.length} Kayıt):\n` + lines.join('\n')
+}
+

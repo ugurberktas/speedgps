@@ -30,6 +30,14 @@ export const GPS_RELIABILITY_CONFIG = {
   STALE_DATA_TIMEOUT_MS: 5000,
 
   /**
+   * Durağan (Hareketsiz / 0 km/sa) Durumda GPS Bayatlık Eşiği (Milisaniye):
+   * Cihaz hareketsizken veya kırmızı ışıkta beklerken mobil tarayıcılar (iOS/Android)
+   * pil tasarrufu için konum güncellemelerini seyreltebilir. Bu bir GPS arızası değildir.
+   * Bu nedenle durağanken bayatlık eşiği daha esnek tutulur (30000 ms = 30 saniye).
+   */
+  STATIONARY_STALE_TIMEOUT_MS: 30000,
+
+  /**
    * Sprint 4 / Adım 2: Hız Filtreleme Eşikleri
    * NOT: Bu eşikler fiziksel kurallar ve literatüre dayalı başlangıç varsayımlarıdır;
    * gerçek saha testleriyle taşıt/kullanıcı profiline göre kalibre edilebilir şekilde tasarlanmıştır.
@@ -94,6 +102,21 @@ export const GPS_RELIABILITY_CONFIG = {
   MAX_HAVERSINE_ACCURACY_METERS: 25.0,
 
   /**
+   * Haversine Hız Hesabı İçin Minimum Zaman Farkı (Milisaniye):
+   * İki GPS noktası arasındaki süre 500 ms'den (0.5 saniye) kısa olduğunda,
+   * koordinat kuantizasyonu/yuvarlama hataları yapay hız sıçramalarına yol açar.
+   * Bu sürenin altındaki noktalarda Haversine hız hesabı yapılmaz (null döner).
+   */
+  MIN_HAVERSINE_TIME_DELTA_MS: 500,
+
+  /**
+   * Haversine Yavaş Yürüyüş Çapa/Biriktirme Zaman Aşımı (Saniye):
+   * Çapa noktasından itibaren bu süre boyunca doğrulanmış bir yer değiştirme
+   * gerçekleşmezse kullanıcı durmuş kabul edilir ve hız 0 km/sa'e çekilir.
+   */
+  HAVERSINE_STATIONARY_TIMEOUT_SECONDS: 3.0,
+
+  /**
    * EMA (Üstel Hareketli Ortalama) Yumuşatma Katsayısı (Alfa):
    * [0, 1] aralığında; 1'e yakın değerler anlık tepkiyi korur ve gecikmeyi önler.
    * 0.75 değeri doğal bir yumuşatma sunarken hız değişimlerini geciktirmez.
@@ -135,13 +158,40 @@ export function isValidAccuracy(accuracy: number | null | undefined): boolean {
 }
 
 /**
+ * İki GPS noktasının konum doğruluklarını birleştirerek efektif doğruluk değerini hesaplar.
+ * İki değer de mevcutsa ortalaması alınır; yalnızca biri varsa o kullanılır.
+ */
+export function calculateCombinedAccuracy(
+  acc1?: number | null,
+  acc2?: number | null
+): number | null {
+  const valid1 = typeof acc1 === 'number' && Number.isFinite(acc1) && acc1 > 0
+  const valid2 = typeof acc2 === 'number' && Number.isFinite(acc2) && acc2 > 0
+
+  if (valid1 && valid2) {
+    return ((acc1 as number) + (acc2 as number)) / 2
+  }
+  if (valid1) {
+    return acc1 as number
+  }
+  if (valid2) {
+    return acc2 as number
+  }
+  return null
+}
+
+/**
  * Konum doğruluğuna (accuracy) duyarlı dinamik mesafe titreme eşiğini hesaplar.
- * Doğruluk değeri sağlandığında, konum değişimi GPS hata payından küçükse hareket yok sayılır.
+ * Tek veya iki nokta doğruluğu verildiğinde hata payı altında kalan hareketleri filtreler.
  * Taban eşik: STATIONARY_DISTANCE_THRESHOLD_METERS (2.0 metre).
  */
-export function getEffectiveDistanceThreshold(accuracy?: number | null): number {
-  if (accuracy !== null && accuracy !== undefined && Number.isFinite(accuracy) && accuracy > 0) {
-    return Math.max(GPS_RELIABILITY_CONFIG.STATIONARY_DISTANCE_THRESHOLD_METERS, accuracy)
+export function getEffectiveDistanceThreshold(
+  accuracy?: number | null,
+  secondAccuracy?: number | null
+): number {
+  const combined = calculateCombinedAccuracy(accuracy, secondAccuracy)
+  if (combined !== null && combined > 0) {
+    return Math.max(GPS_RELIABILITY_CONFIG.STATIONARY_DISTANCE_THRESHOLD_METERS, combined)
   }
   return GPS_RELIABILITY_CONFIG.STATIONARY_DISTANCE_THRESHOLD_METERS
 }

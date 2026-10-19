@@ -6,6 +6,7 @@ import {
   createSavedMeasurement,
   updateSessionStats,
   resetSessionStats,
+  formatHistorySummary,
   INITIAL_SESSION_STATS,
 } from './measurementSession'
 
@@ -188,6 +189,24 @@ describe('measurementSession Utilities', () => {
       expect(stats.avgSpeedKmh).toBeNull()
       expect(stats.distanceMeters).toBe(0)
       expect(stats.speedSamplesCount).toBe(0)
+    })
+  })
+
+  describe('formatHistorySummary', () => {
+    it('boş geçmiş için boş metin döner', () => {
+      expect(formatHistorySummary([])).toBe('')
+    })
+
+    it('kayıtlı ölçümleri formatlı özet metnine dönüştürür', () => {
+      const sampleHistory = [
+        { id: 1, time: '14:30:10', speedKmh: 42.4 },
+        { id: 2, time: '14:31:05', speedKmh: 0.0 },
+      ]
+      const summary = formatHistorySummary(sampleHistory)
+
+      expect(summary).toContain('SpeedGPS Ölçüm Özeti (2 Kayıt):')
+      expect(summary).toContain('#1 | Saat: 14:30:10 | Hız: 42.4 km/sa')
+      expect(summary).toContain('#2 | Saat: 14:31:05 | Hız: 0.0 km/sa')
     })
   })
 })

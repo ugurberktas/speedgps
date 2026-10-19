@@ -103,13 +103,13 @@ export class SpeedFilter {
     const hasSignificantDistance =
       distanceMeters !== undefined &&
       distanceMeters !== null &&
-      distanceMeters >= effectiveDistanceThreshold
+      distanceMeters >= effectiveDistanceThreshold - 0.01
 
     const isStationaryDistance =
       source === 'haversine' &&
       distanceMeters !== undefined &&
       distanceMeters !== null &&
-      distanceMeters < effectiveDistanceThreshold
+      distanceMeters < effectiveDistanceThreshold - 0.01
 
     const isStationarySpeed =
       source === 'gps'

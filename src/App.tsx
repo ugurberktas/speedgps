@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { GpsSpeedTracker, type SpeedSource } from './utils/speedEngine'
-import { calculateHaversineDistance, type Coordinates } from './utils/gpsMath'
+import { calculateHaversineDistance, type GpsPoint } from './utils/gpsMath'
 import {
   GPS_RELIABILITY_CONFIG,
+  calculateCombinedAccuracy,
   getEffectiveDistanceThreshold,
   isReliableGpsReading,
   isValidTimestampSequence,
@@ -18,11 +19,17 @@ import {
   createSavedMeasurement,
   updateSessionStats,
   resetSessionStats,
+  formatHistorySummary,
 } from './utils/measurementSession'
 import { WakeLockManager } from './utils/wakeLock'
 import { getActiveLocationQuality } from './utils/locationQuality'
 import { gpsDebugLogger } from './utils/gpsDebugLogger'
 import { GpsDebugPanel } from './components/GpsDebugPanel'
+import {
+  shouldTriggerOutageRecovery,
+  canIncrementMeasurementDuration,
+  isGpsDataStale,
+} from './utils/outageRecovery'
 import './App.css'
 
 export type GpsStatus = 'durduruldu' | 'bekleniyor' | 'aktif' | 'hata'
@@ -41,6 +48,8 @@ function App() {
   const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null)
   const [speedSource, setSpeedSource] = useState<SpeedSource>('none')
   const [isStale, setIsStale] = useState<boolean>(false)
+  const [isPaused, setIsPaused] = useState<boolean>(false)
+  const [isOutageRecovery, setIsOutageRecovery] = useState<boolean>(false)
   const [currentAccuracy, setCurrentAccuracy] = useState<number | null>(null)
 
   // Oturum istatistikleri ve süre
@@ -51,17 +60,33 @@ function App() {
   const [history, setHistory] = useState<SavedMeasurement[]>([])
   const nextIdRef = useRef<number>(1)
 
-  // GPS Refs
+  // GPS & Durum Refs
   const watchIdRef = useRef<number | null>(null)
   const trackerRef = useRef<GpsSpeedTracker>(new GpsSpeedTracker())
-  const lastCoordsRef = useRef<Coordinates | null>(null)
+  const lastCoordsRef = useRef<GpsPoint | null>(null)
   const lastFixTimestampRef = useRef<number | null>(null)
   const wakeLockRef = useRef<WakeLockManager>(new WakeLockManager())
   const gpsStatusRef = useRef<GpsStatus>(gpsStatus)
+  const isPausedRef = useRef<boolean>(false)
+  const isStaleRef = useRef<boolean>(false)
+  const isOutageRecoveryRef = useRef<boolean>(false)
+  const currentSpeedKmhRef = useRef<number | null>(null)
 
   useEffect(() => {
     gpsStatusRef.current = gpsStatus
   }, [gpsStatus])
+
+  useEffect(() => {
+    isPausedRef.current = isPaused
+  }, [isPaused])
+
+  useEffect(() => {
+    isStaleRef.current = isStale
+  }, [isStale])
+
+  useEffect(() => {
+    currentSpeedKmhRef.current = speedKmh
+  }, [speedKmh])
 
   // Süre Sayacı ve GPS Bayatlık (Staleness) Denetleyicisi
   useEffect(() => {
@@ -70,14 +95,28 @@ function App() {
     }
 
     const interval = setInterval(() => {
-      setElapsedSeconds((prev) => prev + 1)
+      // Yalnızca aktif, arka planda olmayan ve kesintide olmayan sürelerde sayacı artır
+      if (canIncrementMeasurementDuration(gpsStatusRef.current, isPausedRef.current, isStaleRef.current)) {
+        setElapsedSeconds((prev) => prev + 1)
+      }
 
-      // GPS güncellemeleri kesildiğinde (STALE_DATA_TIMEOUT_MS) son hızı ekranda tutma, '--' yap
+      const isStationary = currentSpeedKmhRef.current === 0
+
+      // GPS güncellemeleri kesildiğinde son hızı ekranda tutma, '--' yap
+      // Durağanken (0 km/sa) tarayıcının güncellemeleri seyreltmesi arıza değildir; esnek eşik kullanılır
       if (
         lastFixTimestampRef.current !== null &&
-        Date.now() - lastFixTimestampRef.current > GPS_RELIABILITY_CONFIG.STALE_DATA_TIMEOUT_MS
+        isGpsDataStale(
+          lastFixTimestampRef.current,
+          Date.now(),
+          GPS_RELIABILITY_CONFIG.STALE_DATA_TIMEOUT_MS,
+          isStationary
+        )
       ) {
         setIsStale(true)
+        isStaleRef.current = true
+        setIsOutageRecovery(true)
+        isOutageRecoveryRef.current = true
         setSpeedKmh(null)
       }
     }, 1000)
@@ -85,17 +124,46 @@ function App() {
     return () => clearInterval(interval)
   }, [gpsStatus])
 
-  // Bileşen kapandığında GPS takibini, Wake Lock'u ve oturumu temizle
+  // Görünürlük Yönetimi (visibilitychange), Wake Lock ve Temizlik
   useEffect(() => {
     const tracker = trackerRef.current
     const wakeLock = wakeLockRef.current
 
-    wakeLock.initVisibilityListener(() => {
-      const status = gpsStatusRef.current
-      return status === 'aktif' || status === 'bekleniyor'
-    })
+    const handleVisibilityChange = () => {
+      if (typeof document === 'undefined') {
+        return
+      }
+
+      const isHidden = document.visibilityState === 'hidden'
+      const isTracking =
+        gpsStatusRef.current === 'aktif' || gpsStatusRef.current === 'bekleniyor'
+
+      if (isHidden) {
+        // Uygulama arka plana geçtiğinde canlı GPS ölçümünün güvenilir şekilde devam edeceğini varsayma. Ölçümü duraklat.
+        if (isTracking) {
+          setIsPaused(true)
+          isPausedRef.current = true
+          setIsOutageRecovery(true)
+          isOutageRecoveryRef.current = true
+          setSpeedKmh(null)
+        }
+      } else {
+        // Uygulama tekrar görünür olduğunda GPS takibini güvenli şekilde devam ettir
+        setIsPaused(false)
+        isPausedRef.current = false
+        if (isTracking) {
+          setIsOutageRecovery(true)
+          isOutageRecoveryRef.current = true
+          // Wake Lock'u güvenle yeniden talep et
+          void wakeLock.requestLock()
+        }
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
 
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
       if (watchIdRef.current !== null) {
         navigator.geolocation.clearWatch(watchIdRef.current)
         watchIdRef.current = null
@@ -117,6 +185,11 @@ function App() {
     lastCoordsRef.current = null
     lastFixTimestampRef.current = null
     setIsStale(false)
+    isStaleRef.current = false
+    setIsPaused(false)
+    isPausedRef.current = false
+    setIsOutageRecovery(false)
+    isOutageRecoveryRef.current = false
     setSessionStats(resetSessionStats())
     setElapsedSeconds(0)
     setSpeedKmh(null)
@@ -138,17 +211,18 @@ function App() {
     try {
       const id = navigator.geolocation.watchPosition(
         (position) => {
+          // 1. Uygulama arka plandaysa canlı GPS ölçümünün güvenilir olduğunu varsayma
+          if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+            isOutageRecoveryRef.current = true
+            return
+          }
+
           const timestamp =
             typeof position.timestamp === 'number' &&
             Number.isFinite(position.timestamp) &&
             position.timestamp > 0
               ? position.timestamp
               : Date.now()
-
-          const currentCoords: Coordinates = {
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          }
 
           const readingInput: GpsReliabilityCheckInput = {
             coords: {
@@ -200,11 +274,41 @@ function App() {
             return
           }
 
-          // Kabul edilen okuma: güncellik zaman damgasını yenile ve bayatlığı kaldır
+          // 2. KESİNTİ VE ARKA PLAN SONRASI İLK OKUMA KONTROLÜ (Outage Recovery)
+          // Uzun GPS kesintilerinden (örn. 10-30s) veya arka plandan sonra gelen ilk konum örneğini
+          // yeni hesaplama başlangıcı olarak değerlendir. Kesinti öncesi konumla birleştirerek
+          // sahte hız veya mesafe üretme.
+          const isStationary = currentSpeedKmhRef.current === 0
+          const needsOutageRecovery = shouldTriggerOutageRecovery({
+            isOutageRecoveryFlagged: isOutageRecoveryRef.current,
+            isStale: isStaleRef.current,
+            isPaused: isPausedRef.current,
+            previousTimestamp: prevTimestamp,
+            currentTimestamp: timestamp,
+            staleTimeoutMs: isStationary
+              ? GPS_RELIABILITY_CONFIG.STATIONARY_STALE_TIMEOUT_MS
+              : GPS_RELIABILITY_CONFIG.STALE_DATA_TIMEOUT_MS,
+            isStationary,
+          })
+
+          if (needsOutageRecovery) {
+            // Kesinti sonrasında Haversine çapa noktası ve hız filtrelerinin geçmiş durumunu temizle
+            trackerRef.current.reset()
+            lastCoordsRef.current = null
+            setIsOutageRecovery(false)
+            isOutageRecoveryRef.current = false
+          }
+
+          // Kabul edilen okuma: güncellik zaman damgasını yenile ve bayatlığı/duraklatmayı kaldır
           setGpsStatus('aktif')
           setErrorMessage(null)
           lastFixTimestampRef.current = Date.now()
           setIsStale(false)
+          isStaleRef.current = false
+          setIsPaused(false)
+          isPausedRef.current = false
+          setIsOutageRecovery(false)
+          isOutageRecoveryRef.current = false
           setCurrentAccuracy(
             typeof position.coords.accuracy === 'number' && Number.isFinite(position.coords.accuracy)
               ? position.coords.accuracy
@@ -249,31 +353,67 @@ function App() {
             setSpeedKmh(result.speedKmh)
 
             let deltaMeters = 0
+            const currentPoint: GpsPoint = {
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+              timestamp,
+              accuracy: position.coords.accuracy ?? null,
+            }
+
             if (lastCoordsRef.current) {
-              const dist = calculateHaversineDistance(lastCoordsRef.current, currentCoords)
+              const dist = calculateHaversineDistance(lastCoordsRef.current, currentPoint)
+              const combinedAccuracy = calculateCombinedAccuracy(
+                lastCoordsRef.current.accuracy,
+                position.coords.accuracy
+              )
               const effectiveThreshold = getEffectiveDistanceThreshold(
-                result.source === 'haversine' ? position.coords.accuracy : null
+                result.source === 'haversine' ? combinedAccuracy : null
               )
               // Sabit konum titremesi: mesafe hata payı/eşik altındaysa veya hız 0 ise yapay mesafe ekleme
               if (
                 dist !== null &&
-                dist >= effectiveThreshold &&
+                dist >= effectiveThreshold - 0.01 &&
                 result.speedKmh > 0
               ) {
                 deltaMeters = dist
-                lastCoordsRef.current = currentCoords
+                lastCoordsRef.current = currentPoint
               }
             } else {
-              lastCoordsRef.current = currentCoords
+              lastCoordsRef.current = currentPoint
             }
 
+            // Düzensiz GPS örnekleme aralıkları için zaman farkı (timeDeltaSeconds) hesabı:
+            // Kesinti sonrası ilk okuma değilse ve geçerli bir önceki zaman damgası varsa
+            // gerçek zaman farkını kullan; aksi halde 1.0 saniye varsayılan aralık kullan.
+            const maxAllowedGapMs =
+              isStationary || result.speedKmh === 0
+                ? GPS_RELIABILITY_CONFIG.STATIONARY_STALE_TIMEOUT_MS
+                : GPS_RELIABILITY_CONFIG.STALE_DATA_TIMEOUT_MS
+
+            const timeDeltaSeconds =
+              !needsOutageRecovery &&
+              prevTimestamp &&
+              timestamp > prevTimestamp &&
+              timestamp - prevTimestamp <= maxAllowedGapMs
+                ? (timestamp - prevTimestamp) / 1000
+                : 1.0
+
             setSessionStats((prev) =>
-              updateSessionStats(prev, result.speedKmh, deltaMeters)
+              updateSessionStats(prev, result.speedKmh, deltaMeters, timeDeltaSeconds)
             )
           } else {
             // Henüz ilk okuma veya hesaplanma aşamasında sahte 0 gösterme, null tut
             setSpeedKmh(null)
             setSpeedSource('none')
+            // İlk referans noktasını mesafenin sonraki adımda doğru hesaplanabilmesi için kaydet
+            if (!lastCoordsRef.current) {
+              lastCoordsRef.current = {
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                timestamp,
+                accuracy: position.coords.accuracy ?? null,
+              }
+            }
           }
         },
         (error: GeolocationPositionError) => {
@@ -297,6 +437,11 @@ function App() {
           lastCoordsRef.current = null
           lastFixTimestampRef.current = null
           setIsStale(false)
+          isStaleRef.current = false
+          setIsPaused(false)
+          isPausedRef.current = false
+          setIsOutageRecovery(false)
+          isOutageRecoveryRef.current = false
           setCurrentAccuracy(null)
           setErrorMessage(message)
           setGpsStatus('hata')
@@ -323,6 +468,11 @@ function App() {
       lastCoordsRef.current = null
       lastFixTimestampRef.current = null
       setIsStale(false)
+      isStaleRef.current = false
+      setIsPaused(false)
+      isPausedRef.current = false
+      setIsOutageRecovery(false)
+      isOutageRecoveryRef.current = false
       setCurrentAccuracy(null)
       setErrorMessage('GPS takibi başlatılırken beklenmeyen bir hata oluştu.')
       setGpsStatus('hata')
@@ -345,6 +495,11 @@ function App() {
     lastCoordsRef.current = null
     lastFixTimestampRef.current = null
     setIsStale(false)
+    isStaleRef.current = false
+    setIsPaused(false)
+    isPausedRef.current = false
+    setIsOutageRecovery(false)
+    isOutageRecoveryRef.current = false
     setCurrentAccuracy(null)
     setGpsStatus('durduruldu')
     setSpeedKmh(null)
@@ -353,9 +508,13 @@ function App() {
 
   // Yeni Ölçüm Butonu Mantığı
   const handleNewMeasurement = () => {
-    // 1. GPS ölçümü yoksa, geçersizse veya bayatlamışsa (stale) kayıt oluşturma
-    if (!canSaveMeasurement(speedKmh, gpsStatus, isStale)) {
-      if (isStale) {
+    // 1. GPS ölçümü yoksa, geçersizse, bayatlamışsa (stale) veya arka planda duraklatılmışsa kayıt oluşturma
+    if (!canSaveMeasurement(speedKmh, gpsStatus, isStale, isPaused)) {
+      if (isPaused) {
+        setFeedbackNotice(
+          'Uygulama arka planda duraklatıldı. Yeni ölçüm kaydetmek için lütfen uygulamayı ekranda tutun.'
+        )
+      } else if (isStale) {
         setFeedbackNotice(
           'GPS güncellemesi kesildi veya veri güncel değil. Yeni ölçüm kaydetmek için GPS sinyali bekleniyor.'
         )
@@ -390,8 +549,35 @@ function App() {
     nextIdRef.current = 1
   }
 
+  // Özeti Kopyala Butonu
+  const handleCopySummary = async () => {
+    if (history.length === 0) {
+      return
+    }
+
+    const summaryText = formatHistorySummary(history)
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(summaryText)
+      } else {
+        // Fallback for environments where navigator.clipboard is unavailable
+        const textarea = document.createElement('textarea')
+        textarea.value = summaryText
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
+      }
+      setFeedbackNotice(`Ölçüm özeti (${history.length} kayıt) panoya kopyalandı.`)
+    } catch {
+      setFeedbackNotice('Özet panoya kopyalanamadı. Lütfen tekrar deneyin.')
+    }
+  }
+
   const isTracking = gpsStatus === 'aktif' || gpsStatus === 'bekleniyor'
-  const locationQuality = getActiveLocationQuality(currentAccuracy, gpsStatus, isStale)
+  const locationQuality = getActiveLocationQuality(currentAccuracy, gpsStatus, isStale || isPaused)
 
   return (
     <div className="speedgps-app">
@@ -406,9 +592,9 @@ function App() {
         </div>
 
         <div className="header-status-group">
-          <div className={`status-pill status-${gpsStatus}`}>
+          <div className={`status-pill status-${isPaused ? 'bekleniyor' : gpsStatus}`}>
             <span className="status-dot" aria-hidden="true" />
-            <span>{STATUS_LABELS[gpsStatus]}</span>
+            <span>{isPaused ? 'Ölçüm Duraklatıldı' : STATUS_LABELS[gpsStatus]}</span>
           </div>
 
           {locationQuality && (
@@ -454,7 +640,7 @@ function App() {
       <main className="speed-card" aria-label="Anlık Hız Göstergesi">
         <div className="speed-display-box">
           <span className="speed-number">
-            {speedKmh !== null ? speedKmh.toFixed(0) : '--'}
+            {speedKmh !== null && !isStale && !isPaused ? speedKmh.toFixed(0) : '--'}
           </span>
           <span className="speed-unit">km/sa</span>
         </div>
@@ -462,9 +648,11 @@ function App() {
         <div className="speed-subtext">
           {gpsStatus === 'durduruldu' && 'Ölçümü başlatmak için Başlat butonuna basın.'}
           {gpsStatus === 'bekleniyor' && 'GPS sinyali aranıyor...'}
-          {gpsStatus === 'aktif' && isStale && 'GPS sinyali bekleniyor (güncelleme kesildi)...'}
-          {gpsStatus === 'aktif' && !isStale && speedKmh === null && 'GPS sinyali bekleniyor (hız hesaplanıyor)...'}
-          {gpsStatus === 'aktif' && !isStale && speedKmh !== null && (
+          {gpsStatus === 'aktif' && isPaused && 'Uygulama arka planda: Ölçüm duraklatıldı.'}
+          {gpsStatus === 'aktif' && !isPaused && isStale && 'GPS sinyali aranıyor (sinyal bekleniyor)...'}
+          {gpsStatus === 'aktif' && !isPaused && !isStale && isOutageRecovery && 'GPS konumu güncelleniyor...'}
+          {gpsStatus === 'aktif' && !isPaused && !isStale && !isOutageRecovery && speedKmh === null && 'GPS sinyali bekleniyor (hız hesaplanıyor)...'}
+          {gpsStatus === 'aktif' && !isPaused && !isStale && !isOutageRecovery && speedKmh !== null && (
             <span>
               Canlı ölçüm güncelleniyor ({speedSource === 'haversine' ? 'Haversine hesabı' : 'GPS donanımı'})
             </span>
@@ -560,15 +748,26 @@ function App() {
             )}
           </div>
 
-          {history.length > 0 && (
+          <div className="history-header-actions">
             <button
               type="button"
-              className="btn-clear-history"
-              onClick={handleClearHistory}
+              className="btn-copy-history"
+              onClick={handleCopySummary}
+              disabled={history.length === 0}
+              title={history.length === 0 ? 'Kopyalanacak ölçüm bulunmuyor' : 'Ölçüm özetini panoya kopyala'}
             >
-              Temizle
+              Özeti Kopyala
             </button>
-          )}
+            {history.length > 0 && (
+              <button
+                type="button"
+                className="btn-clear-history"
+                onClick={handleClearHistory}
+              >
+                Temizle
+              </button>
+            )}
+          </div>
         </div>
 
         {history.length === 0 ? (
@@ -599,7 +798,10 @@ function App() {
 
       {/* Alt Bilgi */}
       <footer className="speedgps-footer">
-        <p>Konum verileri yalnızca cihazınızda işlenir; sunucuya aktarılmaz.</p>
+        <p>
+          GPS ölçümleri deneyseldir; cihaz donanımına ve çevresel koşullara göre doğruluk farklılıkları gösterebilir.
+          Konum verileri hiçbir sunucuya gönderilmez, yalnızca tarayıcınızda işlenir.
+        </p>
       </footer>
     </div>
   )
