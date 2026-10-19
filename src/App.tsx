@@ -30,6 +30,17 @@ import {
   canIncrementMeasurementDuration,
   isGpsDataStale,
 } from './utils/outageRecovery'
+import {
+  type SpeedUnit,
+  SPEED_UNIT_OPTIONS,
+  formatSpeedValue,
+  getSpeedUnitLabel,
+  convertSpeedFromKmh,
+  formatPaceFromKmh,
+} from './utils/speedUnits'
+import { PrivacyPolicy } from './components/PrivacyPolicy'
+import { HudView } from './components/HudView'
+import { SpeedometerGauge } from './components/SpeedometerGauge'
 import './App.css'
 
 export type GpsStatus = 'durduruldu' | 'bekleniyor' | 'aktif' | 'hata'
@@ -42,8 +53,35 @@ const STATUS_LABELS: Record<GpsStatus, string> = {
 }
 
 function App() {
+  const [currentPath, setCurrentPath] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return window.location.pathname
+    }
+    return '/'
+  })
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setCurrentPath(window.location.pathname)
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => {
+      window.removeEventListener('popstate', handlePopState)
+    }
+  }, [])
+
+  const navigateTo = (path: string) => {
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', path)
+      setCurrentPath(path)
+    }
+  }
+
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>('durduruldu')
   const [speedKmh, setSpeedKmh] = useState<number | null>(null)
+  const [speedUnit, setSpeedUnit] = useState<SpeedUnit>('kmh')
+  const [displayMode, setDisplayMode] = useState<'speed' | 'pace'>('speed')
+  const [isHudOpen, setIsHudOpen] = useState<boolean>(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null)
   const [speedSource, setSpeedSource] = useState<SpeedSource>('none')
@@ -506,21 +544,25 @@ function App() {
     setSpeedSource('none')
   }
 
-  // Yeni Ölçüm Butonu Mantığı
-  const handleNewMeasurement = () => {
+  // Hızı Kaydet Butonu Mantığı (Sprint 6)
+  const handleSaveSpeed = () => {
     // 1. GPS ölçümü yoksa, geçersizse, bayatlamışsa (stale) veya arka planda duraklatılmışsa kayıt oluşturma
     if (!canSaveMeasurement(speedKmh, gpsStatus, isStale, isPaused)) {
-      if (isPaused) {
+      if (gpsStatus === 'durduruldu') {
         setFeedbackNotice(
-          'Uygulama arka planda duraklatıldı. Yeni ölçüm kaydetmek için lütfen uygulamayı ekranda tutun.'
+          'Ölçüm durdurulduğu için hız kaydedilemiyor. Lütfen önce Başlat butonuna basın.'
+        )
+      } else if (isPaused) {
+        setFeedbackNotice(
+          'Uygulama arka planda duraklatıldı. Hız kaydetmek için lütfen uygulamayı ekranda tutun.'
         )
       } else if (isStale) {
         setFeedbackNotice(
-          'GPS güncellemesi kesildi veya veri güncel değil. Yeni ölçüm kaydetmek için GPS sinyali bekleniyor.'
+          'GPS güncellemesi kesildi veya veri güncel değil. Hız kaydetmek için GPS sinyali bekleniyor.'
         )
       } else {
         setFeedbackNotice(
-          'Geçerli bir hız ölçümü bulunmuyor. Yeni ölçüm kaydetmek için GPS aktif olmalı ve güncel hız verisi alınmalıdır.'
+          'Geçerli bir hız ölçümü bulunmuyor. Hız kaydetmek için GPS aktif olmalı ve güncel hız verisi alınmalıdır.'
         )
       }
       return
@@ -533,13 +575,14 @@ function App() {
 
     setHistory((prev) => [newRecord, ...prev])
 
-    // 3. Mevcut oturum istatistiklerini sıfırla; eski konum örneklerini yeni oturuma karıştırma
-    setSessionStats(resetSessionStats())
-    setElapsedSeconds(0)
-    lastCoordsRef.current = null
+    // NOT: Hızı Kaydet oturum istatistiklerini (süre, mesafe, maks/ortalama hız) sıfırlamaz.
+    // Canlı GPS takibi kesintisiz devam eder.
+
+    const unitLabel = getSpeedUnitLabel(speedUnit)
+    const displayRecordedSpeed = formatSpeedValue(newRecord.speedKmh, speedUnit, 1)
 
     setFeedbackNotice(
-      `Ölçüm #${newRecord.id} (${newRecord.speedKmh} km/sa) kaydedildi. Yeni oturum başlatıldı.`
+      `Hız kaydedildi: #${newRecord.id} (${displayRecordedSpeed} ${unitLabel})`
     )
   }
 
@@ -555,7 +598,11 @@ function App() {
       return
     }
 
-    const summaryText = formatHistorySummary(history)
+    const unitLabel = getSpeedUnitLabel(speedUnit)
+    const summaryText = formatHistorySummary(history, {
+      unitLabel,
+      convertFn: (v) => convertSpeedFromKmh(v, speedUnit) ?? v,
+    })
     try {
       if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
         await navigator.clipboard.writeText(summaryText)
@@ -570,14 +617,77 @@ function App() {
         document.execCommand('copy')
         document.body.removeChild(textarea)
       }
-      setFeedbackNotice(`Ölçüm özeti (${history.length} kayıt) panoya kopyalandı.`)
+      setFeedbackNotice(`Ölçüm özeti (${history.length} kayıt, ${unitLabel}) panoya kopyalandı.`)
     } catch {
       setFeedbackNotice('Özet panoya kopyalanamadı. Lütfen tekrar deneyin.')
     }
   }
 
+  // Araç HUD Modu Açılış Mantığı (Tam ekran ve yön kilidi korumalı)
+  const handleOpenHud = async () => {
+    setIsHudOpen(true)
+
+    // 1. Tarayıcı destekliyorsa Fullscreen API ile tam ekranı dene
+    try {
+      if (document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen().catch(() => {})
+      } else if ((document.documentElement as any).webkitRequestFullscreen) {
+        await (document.documentElement as any).webkitRequestFullscreen().catch(() => {})
+      }
+    } catch {
+      // Fullscreen desteklenmediğinde sessizce devam et
+    }
+
+    // 2. Destekleniyorsa Screen Orientation API ile landscape yönünü iste
+    try {
+      if (screen.orientation && typeof (screen.orientation as any).lock === 'function') {
+        await (screen.orientation as any).lock('landscape').catch(() => {})
+      }
+    } catch {
+      // Desteklenmeyen veya reddedilen (örn. iOS Safari) durumlarda sessizce devam et
+    }
+  }
+
+  // Araç HUD Modu Kapanış Mantığı
+  const handleCloseHud = async () => {
+    setIsHudOpen(false)
+
+    // 1. Tam ekrandan güvenle çık
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen().catch(() => {})
+      } else if ((document as any).webkitFullscreenElement) {
+        await (document as any).webkitExitFullscreen().catch(() => {})
+      }
+    } catch {
+      // Sessizce devam et
+    }
+
+    // 2. Ekran yönü kilidini kaldır
+    try {
+      if (screen.orientation && typeof (screen.orientation as any).unlock === 'function') {
+        screen.orientation.unlock()
+      }
+    } catch {
+      // Sessizce devam et
+    }
+  }
+
+  // Hız Birimini Döndür (HUD ekranından dokunulduğunda)
+  const handleCycleSpeedUnit = () => {
+    setSpeedUnit((prev) => {
+      if (prev === 'kmh') return 'mph'
+      if (prev === 'mph') return 'ms'
+      return 'kmh'
+    })
+  }
+
   const isTracking = gpsStatus === 'aktif' || gpsStatus === 'bekleniyor'
   const locationQuality = getActiveLocationQuality(currentAccuracy, gpsStatus, isStale || isPaused)
+
+  if (currentPath === '/gizlilik') {
+    return <PrivacyPolicy onBackToHome={() => navigateTo('/')} />
+  }
 
   return (
     <div className="speedgps-app">
@@ -636,14 +746,92 @@ function App() {
         </div>
       )}
 
-      {/* Ana Hız Kartı */}
-      <main className="speed-card" aria-label="Anlık Hız Göstergesi">
-        <div className="speed-display-box">
-          <span className="speed-number">
-            {speedKmh !== null && !isStale && !isPaused ? speedKmh.toFixed(0) : '--'}
-          </span>
-          <span className="speed-unit">km/sa</span>
+      {/* Ana Hız / Tempo Kartı */}
+      <main className="speed-card" aria-label={displayMode === 'pace' ? 'Anlık Tempo Göstergesi' : 'Anlık Hız Göstergesi'}>
+        {/* Görünüm Modu ve Birim Seçici Üst Barı */}
+        <div className="card-top-controls">
+          {/* Hız / Tempo Görünüm Seçici */}
+          <div className="mode-selector" role="tablist" aria-label="Görünüm Modu">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={displayMode === 'speed'}
+              className={`mode-toggle-btn ${displayMode === 'speed' ? 'active' : ''}`}
+              onClick={() => setDisplayMode('speed')}
+            >
+              Hız
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={displayMode === 'pace'}
+              className={`mode-toggle-btn ${displayMode === 'pace' ? 'active' : ''}`}
+              onClick={() => setDisplayMode('pace')}
+            >
+              Tempo
+            </button>
+          </div>
+
+          {/* Sağ Kontroller Grubu: Hız Birimi ve HUD Butonu */}
+          <div className="card-top-right-group">
+            {/* Hız Birimi Seçici (Yalnızca Hız Modunda) */}
+            {displayMode === 'speed' ? (
+              <div className="speed-unit-selector" role="radiogroup" aria-label="Hız Birimi">
+                {SPEED_UNIT_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={speedUnit === opt.id}
+                    className={`unit-toggle-btn ${speedUnit === opt.id ? 'active' : ''}`}
+                    onClick={() => setSpeedUnit(opt.id)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="pace-badge-info" title="Yürüyüş ve koşu temposu (min/km)">
+                min/km
+              </div>
+            )}
+
+            {/* Araç HUD Modu Butonu */}
+            <button
+              type="button"
+              className="hud-trigger-btn"
+              onClick={handleOpenHud}
+              aria-label="Araç HUD Modunu Aç"
+              title="Ön cama yansıtma modu (HUD)"
+            >
+              HUD
+            </button>
+          </div>
         </div>
+
+        {/* Hız Modunda Araba Kadranı (Yarım Daire Hız Göstergesi) / Tempo Modunda Dijital Tempo */}
+        {displayMode === 'speed' ? (
+          <SpeedometerGauge
+            speedKmh={speedKmh}
+            speedUnit={speedUnit}
+            isSpeedValid={speedKmh !== null && !isStale && !isPaused && gpsStatus === 'aktif'}
+            formattedSpeed={
+              speedKmh !== null && !isStale && !isPaused
+                ? formatSpeedValue(speedKmh, speedUnit, 0)
+                : '--'
+            }
+            unitLabel={getSpeedUnitLabel(speedUnit)}
+          />
+        ) : (
+          <div className="speed-display-box">
+            <span className="speed-number pace-number">
+              {speedKmh !== null && !isStale && !isPaused
+                ? formatPaceFromKmh(speedKmh)
+                : '--:--'}
+            </span>
+            <span className="speed-unit">min/km</span>
+          </div>
+        )}
 
         <div className="speed-subtext">
           {gpsStatus === 'durduruldu' && 'Ölçümü başlatmak için Başlat butonuna basın.'}
@@ -663,32 +851,33 @@ function App() {
 
       {/* Kontrol Butonları */}
       <section className="controls-container" aria-label="Ölçüm Kontrolleri">
-        <button
-          type="button"
-          className="btn-primary-record"
-          onClick={handleNewMeasurement}
-        >
-          <span>Yeni Ölçüm</span>
-        </button>
-
-        <div className="secondary-buttons-row">
+        {!isTracking ? (
           <button
             type="button"
-            className="btn-secondary btn-start-action"
+            className="btn-primary-start"
             onClick={startTracking}
-            disabled={isTracking}
           >
-            Başlat
+            <span>Başlat</span>
           </button>
-          <button
-            type="button"
-            className="btn-secondary btn-stop-action"
-            onClick={stopTracking}
-            disabled={gpsStatus === 'durduruldu'}
-          >
-            Durdur
-          </button>
-        </div>
+        ) : (
+          <div className="active-controls-row">
+            <button
+              type="button"
+              className="btn-action-half btn-start-disabled"
+              disabled
+              aria-disabled="true"
+            >
+              <span>Başlat</span>
+            </button>
+            <button
+              type="button"
+              className="btn-action-half btn-stop-active"
+              onClick={stopTracking}
+            >
+              <span>Durdur</span>
+            </button>
+          </div>
+        )}
       </section>
 
       {/* Oturum İstatistikleri */}
@@ -702,11 +891,9 @@ function App() {
             <span className="stat-label">Maksimum Hız</span>
             <div className="stat-value">
               <span>
-                {sessionStats.maxSpeedKmh !== null
-                  ? sessionStats.maxSpeedKmh.toFixed(0)
-                  : '--'}
+                {formatSpeedValue(sessionStats.maxSpeedKmh, speedUnit, 0)}
               </span>
-              <span className="stat-unit">km/sa</span>
+              <span className="stat-unit">{getSpeedUnitLabel(speedUnit)}</span>
             </div>
           </div>
 
@@ -714,11 +901,9 @@ function App() {
             <span className="stat-label">Ortalama Hız</span>
             <div className="stat-value">
               <span>
-                {sessionStats.avgSpeedKmh !== null
-                  ? sessionStats.avgSpeedKmh.toFixed(1)
-                  : '--'}
+                {formatSpeedValue(sessionStats.avgSpeedKmh, speedUnit, 1)}
               </span>
-              <span className="stat-unit">km/sa</span>
+              <span className="stat-unit">{getSpeedUnitLabel(speedUnit)}</span>
             </div>
           </div>
 
@@ -751,6 +936,14 @@ function App() {
           <div className="history-header-actions">
             <button
               type="button"
+              className="btn-save-speed"
+              onClick={handleSaveSpeed}
+              title="Anlık geçerli hızı geçmişe kaydet"
+            >
+              Hızı Kaydet
+            </button>
+            <button
+              type="button"
               className="btn-copy-history"
               onClick={handleCopySummary}
               disabled={history.length === 0}
@@ -772,7 +965,7 @@ function App() {
 
         {history.length === 0 ? (
           <div className="history-empty">
-            Henüz kaydedilmiş ölçüm bulunmuyor. Canlı hız ölçülürken "Yeni Ölçüm" butonuna
+            Henüz kaydedilmiş ölçüm bulunmuyor. Canlı hız ölçülürken "Hızı Kaydet" butonuna
             basarak anlık hızınızı kaydedebilirsiniz.
           </div>
         ) : (
@@ -784,8 +977,10 @@ function App() {
                   <span className="history-time">{item.time}</span>
                 </div>
                 <div className="history-item-right">
-                  <span className="history-speed">{item.speedKmh.toFixed(1)}</span>
-                  <span className="history-unit">km/sa</span>
+                  <span className="history-speed">
+                    {formatSpeedValue(item.speedKmh, speedUnit, 1)}
+                  </span>
+                  <span className="history-unit">{getSpeedUnitLabel(speedUnit)}</span>
                 </div>
               </li>
             ))}
@@ -802,7 +997,32 @@ function App() {
           GPS ölçümleri deneyseldir; cihaz donanımına ve çevresel koşullara göre doğruluk farklılıkları gösterebilir.
           Konum verileri hiçbir sunucuya gönderilmez, yalnızca tarayıcınızda işlenir.
         </p>
+        <div className="footer-links">
+          <a
+            href="/gizlilik"
+            onClick={(e) => {
+              e.preventDefault()
+              navigateTo('/gizlilik')
+            }}
+            className="footer-privacy-link"
+          >
+            Gizlilik ve KVKK
+          </a>
+        </div>
       </footer>
+
+      {/* Araç HUD (Head-Up Display) Tam Ekran Katmanı */}
+      {isHudOpen && (
+        <HudView
+          speedKmh={speedKmh}
+          speedUnit={speedUnit}
+          gpsStatus={gpsStatus}
+          isStale={isStale}
+          isPaused={isPaused}
+          onClose={handleCloseHud}
+          onCycleUnit={handleCycleSpeedUnit}
+        />
+      )}
     </div>
   )
 }

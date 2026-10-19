@@ -1,0 +1,172 @@
+/* ==========================================================================
+   SpeedGPS — Araç HUD (Head-Up Display) Modu
+   ========================================================================== */
+
+.hud-overlay {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  width: 100dvw;
+  height: 100vh;
+  height: 100dvh;
+  background-color: #000000;
+  color: #ffffff;
+  z-index: 99999;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  /* Mobil çentik ve güvenli alan dolguları */
+  padding-top: env(safe-area-inset-top, 0);
+  padding-right: env(safe-area-inset-right, 0);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+  padding-left: env(safe-area-inset-left, 0);
+  box-sizing: border-box;
+}
+
+/* Üst Kontrol Barı — Çıkış Butonu */
+.hud-top-bar {
+  position: absolute;
+  top: max(16px, env(safe-area-inset-top, 16px));
+  right: max(16px, env(safe-area-inset-right, 16px));
+  z-index: 100001;
+  display: flex;
+  align-items: center;
+  pointer-events: auto;
+}
+
+/* Çıkış Butonu — ASLA aynalanmaz, kullanıcı tarafından doğrudan okunabilir */
+.hud-exit-btn {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  line-height: 1.2;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transform: none !important;
+  transition: background-color 0.15s ease, opacity 0.15s ease, border-color 0.15s ease;
+  min-height: 38px;
+  min-width: 44px;
+}
+
+.hud-exit-btn:hover {
+  background: rgba(255, 255, 255, 0.26);
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
+.hud-exit-btn:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+.hud-exit-icon {
+  font-size: 12px;
+  font-weight: 700;
+  opacity: 0.85;
+}
+
+.hud-exit-text {
+  letter-spacing: 0.02em;
+}
+
+/* HUD İçerik Alanı — Doğal Yatay Yerleşim */
+.hud-content-wrapper {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* Ön Cama Yansıtma İçin Yatay Aynalama (scaleX(-1)) */
+.hud-mirrored-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transform: scaleX(-1);
+  transform-origin: center center;
+  cursor: pointer;
+}
+
+.hud-mirrored-display:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.3);
+  outline-offset: 8px;
+  border-radius: 16px;
+}
+
+/* Devasa Beyaz Hız Rakamı */
+.hud-speed-value {
+  color: #ffffff;
+  font-size: clamp(100px, 28vw, 240px);
+  font-weight: 900;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  line-height: 0.88;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  text-shadow: 0 0 40px rgba(255, 255, 255, 0.25);
+}
+
+/* Birim Etiketi (km/sa, mph, m/s) */
+.hud-speed-unit {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: clamp(16px, 4vw, 28px);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-top: 14px;
+  text-align: center;
+}
+
+/* ==========================================================================
+   Dikey (Portrait) Ekranlar için CSS Tabanlı 90 Derece Dönüş
+   (Screen Orientation Lock desteklemeyen iOS Safari vb. için)
+   ========================================================================== */
+@media (orientation: portrait) {
+  .hud-content-wrapper {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100dvh;
+    height: 100dvw;
+    transform: translate(-50%, -50%) rotate(90deg);
+  }
+
+  .hud-speed-value {
+    font-size: clamp(90px, 26vh, 220px);
+  }
+
+  .hud-speed-unit {
+    font-size: clamp(15px, 3.8vh, 26px);
+  }
+}
+
+/* Modern Konteyner Sorgusu Desteği */
+@supports (container-type: size) {
+  .hud-content-wrapper {
+    container-type: size;
+  }
+
+  .hud-speed-value {
+    font-size: clamp(90px, 27cqw, 240px);
+  }
+
+  .hud-speed-unit {
+    font-size: clamp(15px, 3.8cqw, 28px);
+  }
+}

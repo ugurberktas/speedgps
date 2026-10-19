@@ -226,15 +226,26 @@ export function resetSessionStats(): SessionStats {
 
 /**
  * Kaydedilen ölçüm geçmişini metin özeti olarak formatlar.
+ * İsteğe bağlı olarak hedef hız birimi dönüştürmesini destekler.
  */
-export function formatHistorySummary(items: SavedMeasurement[]): string {
+export function formatHistorySummary(
+  items: SavedMeasurement[],
+  options?: {
+    unitLabel?: string
+    convertFn?: (speedKmh: number) => number
+  }
+): string {
   if (!items || items.length === 0) {
     return ''
   }
 
-  const lines = items.map(
-    (item) => `#${item.id} | Saat: ${item.time} | Hız: ${item.speedKmh.toFixed(1)} km/sa`
-  )
+  const unitLabel = options?.unitLabel || 'km/sa'
+  const convertFn = options?.convertFn || ((v: number) => v)
+
+  const lines = items.map((item) => {
+    const displaySpeed = convertFn(item.speedKmh)
+    return `#${item.id} | Saat: ${item.time} | Hız: ${displaySpeed.toFixed(1)} ${unitLabel}`
+  })
 
   return `SpeedGPS Ölçüm Özeti (${items.length} Kayıt):\n` + lines.join('\n')
 }

@@ -1,0 +1,98 @@
+/* ==========================================================================
+   SpeedGPS — Araba Kadranı (Yarım Daire Hız Göstergesi)
+   ========================================================================== */
+
+.speedometer-container {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+  margin: 4px auto 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  user-select: none;
+}
+
+.speedometer-svg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  display: block;
+}
+
+/* Pasif Zemin Yayı */
+.gauge-track-arc {
+  stroke: #e8e0d5;
+  transition: stroke 0.2s ease;
+}
+
+/* Ölçek Çizgileri ve Etiketleri */
+.gauge-tick-line {
+  stroke: #cbd5e1;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.gauge-tick-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  fill: #94a3b8;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* Aktif Hız Yayı */
+.gauge-active-arc {
+  transition: stroke-dashoffset 0.28s cubic-bezier(0.2, 0.8, 0.25, 1);
+}
+
+/* Kadran Merkezindeki Dijital Okuma Alanı */
+.speedometer-readout {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  width: 100%;
+}
+
+.speedometer-readout .speed-number {
+  font-size: clamp(64px, 17vw, 90px);
+  font-weight: 800;
+  line-height: 0.92;
+  color: var(--text-primary, #0f172a);
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.speedometer-readout .speed-unit {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--text-secondary, #64748b);
+  text-transform: uppercase;
+  margin-top: 5px;
+}
+
+/* Mobil Dar Ekran İyileştirmeleri */
+@media (max-width: 360px) {
+  .speedometer-container {
+    max-width: 270px;
+  }
+
+  .speedometer-readout .speed-number {
+    font-size: 58px;
+  }
+
+  .speedometer-readout .speed-unit {
+    font-size: 11px;
+    margin-top: 3px;
+  }
+}
