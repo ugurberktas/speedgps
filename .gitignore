@@ -36,3 +36,4 @@ playwright/.cache/
 
 # GPS Debug dumps
 *gps-debug*.json
+speedgps-raw-data-*.json

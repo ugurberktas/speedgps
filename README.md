@@ -103,7 +103,7 @@ Tarayıcıların Geolocation API erişim politikası gereği, GPS kullanımı i�
 
 ## 🌐 Netlify Dağıtım Yapılandırması
 
-SpeedGPS, Netlify üzerinde doğrudan statik web uygulaması olarak barındırılabilir. Proje kökünde hazır bulunan [netlify.toml](file:///Users/ugurberktas/Desktop/speedGPS/netlify.toml) yapılandırması sayesinde tüm yönlendirme ve önbellek kuralları otomatiktir.
+SpeedGPS, Netlify üzerinde doğrudan statik web uygulaması olarak barındırılabilir. Proje kökünde hazır bulunan [netlify.toml](netlify.toml) yapılandırması sayesinde tüm yönlendirme ve önbellek kuralları otomatiktir.
 
 - **Build command:** `npm run build`
 - **Publish directory:** `dist`

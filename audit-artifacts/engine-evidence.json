@@ -1,0 +1,6 @@
+{
+  "wrongInitialThen20Valid36Kmh": 120,
+  "after60SecondStopThen5MetresIn1Second": 0.3,
+  "stationaryAfter1000MetreRelocationAt15Seconds": 240,
+  "stationaryThen24MetreJumpAt2Seconds": 43.2
+}

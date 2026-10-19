@@ -11,7 +11,7 @@ import { isValidCoordinate, type Coordinates } from './gpsMath'
 export const GPS_RELIABILITY_CONFIG = {
   /**
    * Maksimum Kabul Edilebilir Konum Doğruluğu (Metre):
-   * coords.accuracy değeri, cihazın hesapladığı konumun %68 güvenilirlikle bu yarıçap içinde
+   * coords.accuracy değeri, cihazın hesapladığı konumun %95 güven düzeyiyle bu yarıçap içinde
    * olduğunu belirtir. Bu değer doğrudan hız doğruluğu değildir (hız değeri platform/cihaz
    * tarafından GNSS alıcı donanımı, Doppler kayması veya sensör füzyonu ile sağlanabilir);
    * ancak konum doğruluğu 100 metrenin üzerine çıktığında (zayıf uydu geometrisi, baz istasyonu veya IP tahmini),

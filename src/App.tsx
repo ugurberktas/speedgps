@@ -241,6 +241,7 @@ function App() {
     void wakeLockRef.current.requestLock()
 
     if (!('geolocation' in navigator)) {
+      void wakeLockRef.current.releaseLock()
       setErrorMessage('Tarayıcınız Geolocation API özelliğini desteklemiyor.')
       setGpsStatus('hata')
       return

@@ -10,7 +10,7 @@ export interface Coordinates {
 
 export interface GpsPoint extends Coordinates {
   timestamp: number // Milisaniye cinsinden zaman damgası (Date.now() / epoch ms)
-  accuracy?: number | null // Konum hata payı / doğruluğu (metre cinsinden, %68 güvenilirlik yarıçapı)
+  accuracy?: number | null // Konum hata payı / doğruluğu (metre cinsinden, %95 güven düzeyi)
 }
 
 /** Dünya yarıçapı (metre cinsinden - WGS-84 ortalama) */

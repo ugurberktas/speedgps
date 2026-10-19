@@ -1,0 +1,34 @@
+{
+  "note": "Targeted Desktop Chrome run before final full 40-test run. Expected failures document unresolved defects.",
+  "tests": [
+    {
+      "title": "audit: rejected speed spike must not add a one-kilometre coordinate jump",
+      "expectedStatus": "failed",
+      "actualStatus": "failed",
+      "error": "Error: expect(locator).toHaveText(expected) failed\n\nLocator:  locator('.stat-tile').nth(2).locator('.stat-value')\nExpected: \"0 m\"\nReceived: \"1000 m\"\nTimeout:  5000ms\n\nCall log:\n  - Expect \"toHaveText\" locator('.stat-tile').nth(2).locator('.stat-value') with timeout 5000ms\n  - waiting for locator('.stat-tile').nth(2).locator('.stat-value')\n    14 × locator resolved to <div class=\"stat-value\">…</div>\n       - unexpected value \"1000 m\"\n"
+    },
+    {
+      "title": "audit: stopping during sparse stationary fixes must include elapsed stationary time in average",
+      "expectedStatus": "failed",
+      "actualStatus": "failed",
+      "error": "Error: expect(locator).not.toContainText(expected) failed\n\nLocator: locator('.stat-tile').nth(1)\nExpected substring: not \"18.0\"\nReceived string: \"Ortalama Hız18.0km/sa\"\nTimeout: 5000ms\n\nCall log:\n  - Expect \"not toContainText\" locator('.stat-tile').nth(1) with timeout 5000ms\n  - waiting for locator('.stat-tile').nth(1)\n    14 × locator resolved to <div class=\"stat-tile\">…</div>\n       - unexpected value \"Ortalama Hız18.0km/sa\"\n"
+    },
+    {
+      "title": "audit: transient timeout must keep watching for tunnel recovery",
+      "expectedStatus": "failed",
+      "actualStatus": "failed",
+      "error": "Error: expect(received).toBe(expected) // Object.is equality\n\nExpected: 0\nReceived: 1"
+    },
+    {
+      "title": "audit: null Haversine speeds must not count as measured duration indefinitely",
+      "expectedStatus": "failed",
+      "actualStatus": "failed",
+      "error": "Error: expect(locator).toContainText(expected) failed\n\nLocator: locator('.stat-tile').nth(3)\nExpected substring: \"00:00\"\nReceived string:    \"Süre00:13\"\nTimeout: 5000ms\n\nCall log:\n  - Expect \"toContainText\" locator('.stat-tile').nth(3) with timeout 5000ms\n  - waiting for locator('.stat-tile').nth(3)\n    6 × locator resolved to <div class=\"stat-tile\">…</div>\n      - unexpected value \"Süre00:09\"\n    2 × locator resolved to <div class=\"stat-tile\">…</div>\n      - unexpected value \"Süre00:10\"\n    2 × locator resolved to <div class=\"stat-tile\">…</div>\n      - unexpected value \"Süre00:11\"\n    2 × locator resolved to <div class=\"stat-tile\">…</div>\n      - unexpected value \"Süre00:12\"\n    2 × locator resolved to <div class=\"stat-tile\">…</div>\n      - unexpected value \"Süre00:13\"\n"
+    },
+    {
+      "title": "audit: stop removes watcher and preserves recorded history on restart",
+      "expectedStatus": "passed",
+      "actualStatus": "passed"
+    }
+  ]
+}
