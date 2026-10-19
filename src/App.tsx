@@ -3,6 +3,7 @@ import { GpsSpeedTracker, type SpeedSource } from './utils/speedEngine'
 import { calculateHaversineDistance, type Coordinates } from './utils/gpsMath'
 import {
   GPS_RELIABILITY_CONFIG,
+  getEffectiveDistanceThreshold,
   isReliableGpsReading,
   isValidTimestampSequence,
   type GpsReliabilityCheckInput,
@@ -20,6 +21,8 @@ import {
 } from './utils/measurementSession'
 import { WakeLockManager } from './utils/wakeLock'
 import { getActiveLocationQuality } from './utils/locationQuality'
+import { gpsDebugLogger } from './utils/gpsDebugLogger'
+import { GpsDebugPanel } from './components/GpsDebugPanel'
 import './App.css'
 
 export type GpsStatus = 'durduruldu' | 'bekleniyor' | 'aktif' | 'hata'
@@ -168,6 +171,32 @@ function App() {
             setSpeedKmh(null)
             setSpeedSource('none')
             setCurrentAccuracy(null)
+
+            if (import.meta.env.DEV) {
+              let reason = 'Güvenilir olmayan GPS örneği'
+              if (
+                position.coords.accuracy &&
+                position.coords.accuracy > GPS_RELIABILITY_CONFIG.MAX_ACCEPTABLE_ACCURACY_METERS
+              ) {
+                reason = `Doğruluk kabul sınırını aştı (±${position.coords.accuracy.toFixed(1)}m > ${GPS_RELIABILITY_CONFIG.MAX_ACCEPTABLE_ACCURACY_METERS}m)`
+              } else if (!isValidTimestampSequence(prevTimestamp, timestamp)) {
+                reason = 'Aynı veya geriye giden zaman damgası reddedildi'
+              }
+
+              gpsDebugLogger.logSample({
+                timestamp,
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                accuracy: position.coords.accuracy ?? null,
+                speed: position.coords.speed ?? null,
+                speedKmh: null,
+                heading: position.coords.heading ?? null,
+                altitude: position.coords.altitude ?? null,
+                source: 'none',
+                status: 'rejected',
+                reason,
+              })
+            }
             return
           }
 
@@ -185,6 +214,35 @@ function App() {
           // Hız motoru ile hızı hesapla (doğruluk, koordinat ve zaman kontrolleri dahil)
           const result = trackerRef.current.processReading(readingInput)
 
+          if (import.meta.env.DEV) {
+            const isAccepted = result.speedKmh !== null
+            let reason: string | undefined
+            if (!isAccepted) {
+              if (
+                result.source === 'none' &&
+                (position.coords.accuracy ?? 0) > GPS_RELIABILITY_CONFIG.MAX_HAVERSINE_ACCURACY_METERS
+              ) {
+                reason = `Haversine hızı reddedildi: Doğruluk zayıf (±${position.coords.accuracy?.toFixed(1)}m > ${GPS_RELIABILITY_CONFIG.MAX_HAVERSINE_ACCURACY_METERS}m)`
+              } else {
+                reason = 'İlk konum referansı veya hız hesaplanamadı'
+              }
+            }
+
+            gpsDebugLogger.logSample({
+              timestamp,
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+              accuracy: position.coords.accuracy ?? null,
+              speed: position.coords.speed ?? null,
+              speedKmh: result.speedKmh,
+              heading: position.coords.heading ?? null,
+              altitude: position.coords.altitude ?? null,
+              source: result.source,
+              status: isAccepted ? 'accepted' : 'rejected',
+              reason,
+            })
+          }
+
           // Yalnızca geçerli bir hız üretilmişse istatistikleri ve mesafeyi güncelle
           if (result.speedKmh !== null) {
             setSpeedSource(result.source)
@@ -193,10 +251,13 @@ function App() {
             let deltaMeters = 0
             if (lastCoordsRef.current) {
               const dist = calculateHaversineDistance(lastCoordsRef.current, currentCoords)
-              // Sabit konum titremesi: mesafe eşiği altındaysa veya hız 0 ise yapay mesafe ekleme
+              const effectiveThreshold = getEffectiveDistanceThreshold(
+                result.source === 'haversine' ? position.coords.accuracy : null
+              )
+              // Sabit konum titremesi: mesafe hata payı/eşik altındaysa veya hız 0 ise yapay mesafe ekleme
               if (
                 dist !== null &&
-                dist >= GPS_RELIABILITY_CONFIG.STATIONARY_DISTANCE_THRESHOLD_METERS &&
+                dist >= effectiveThreshold &&
                 result.speedKmh > 0
               ) {
                 deltaMeters = dist
@@ -532,6 +593,9 @@ function App() {
           </ul>
         )}
       </section>
+
+      {/* Geliştirici GPS Debug Paneli (Yalnızca Dev Ortamında) */}
+      {import.meta.env.DEV && <GpsDebugPanel />}
 
       {/* Alt Bilgi */}
       <footer className="speedgps-footer">

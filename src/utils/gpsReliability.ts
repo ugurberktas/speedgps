@@ -84,6 +84,16 @@ export const GPS_RELIABILITY_CONFIG = {
   STATIONARY_DISTANCE_THRESHOLD_METERS: 2.0,
 
   /**
+   * Haversine (Koordinat Farkı) Hız Hesabı İçin Maksimum Kabul Edilebilir Konum Doğruluğu (Metre):
+   * coords.speed mevcut olduğunda donanım/sensör hızına güvenilebilir; ancak coords.speed null
+   * olduğunda hız iki koordinat arasındaki mesafeden türetilir. Konum doğruluğu 25 metreden
+   * daha kötüyse (Zayıf kalite), koordinat dalgalanmaları sahte yüksek hızlar (ör. 86 km/sa)
+   * üreteceğinden Haversine ile hız ve mesafe türetilmez.
+   * Başlangıç varsayımı: 25.0 metre.
+   */
+  MAX_HAVERSINE_ACCURACY_METERS: 25.0,
+
+  /**
    * EMA (Üstel Hareketli Ortalama) Yumuşatma Katsayısı (Alfa):
    * [0, 1] aralığında; 1'e yakın değerler anlık tepkiyi korur ve gecikmeyi önler.
    * 0.75 değeri doğal bir yumuşatma sunarken hız değişimlerini geciktirmez.
@@ -122,6 +132,18 @@ export function isValidAccuracy(accuracy: number | null | undefined): boolean {
   }
 
   return true
+}
+
+/**
+ * Konum doğruluğuna (accuracy) duyarlı dinamik mesafe titreme eşiğini hesaplar.
+ * Doğruluk değeri sağlandığında, konum değişimi GPS hata payından küçükse hareket yok sayılır.
+ * Taban eşik: STATIONARY_DISTANCE_THRESHOLD_METERS (2.0 metre).
+ */
+export function getEffectiveDistanceThreshold(accuracy?: number | null): number {
+  if (accuracy !== null && accuracy !== undefined && Number.isFinite(accuracy) && accuracy > 0) {
+    return Math.max(GPS_RELIABILITY_CONFIG.STATIONARY_DISTANCE_THRESHOLD_METERS, accuracy)
+  }
+  return GPS_RELIABILITY_CONFIG.STATIONARY_DISTANCE_THRESHOLD_METERS
 }
 
 export interface GpsReliabilityCheckInput {

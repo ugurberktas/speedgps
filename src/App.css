@@ -579,6 +579,160 @@
   margin: 0;
 }
 
+/* GPS Debug Panel (Dev Only) */
+.gps-debug-panel {
+  margin-top: 8px;
+  background-color: #fafaf9;
+  border: 1px dashed #d6d3d1;
+  border-radius: 14px;
+  padding: 10px 14px;
+  font-size: 12px;
+}
+
+.debug-details {
+  width: 100%;
+}
+
+.debug-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  font-weight: 600;
+  color: #57534e;
+  list-style: none;
+  user-select: none;
+}
+
+.debug-summary::-webkit-details-marker {
+  display: none;
+}
+
+.debug-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.debug-badge {
+  font-size: 11px;
+  background-color: #e7e5e4;
+  color: #44403c;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.debug-content {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.debug-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.debug-btn {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.debug-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.debug-btn-download {
+  background-color: #ea580c;
+  color: #ffffff;
+}
+
+.debug-btn-download:hover:not(:disabled) {
+  background-color: #c2410c;
+}
+
+.debug-btn-clear {
+  background-color: #e7e5e4;
+  color: #44403c;
+  border-color: #d6d3d1;
+}
+
+.debug-btn-clear:hover:not(:disabled) {
+  background-color: #d6d3d1;
+}
+
+.debug-sample-box {
+  background-color: #ffffff;
+  border: 1px solid #e7e5e4;
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.debug-sample-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+}
+
+.debug-status {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.debug-status.status-accepted {
+  background-color: #dcfce7;
+  color: #15803d;
+}
+
+.debug-status.status-rejected {
+  background-color: #fee2e2;
+  color: #b91c1c;
+}
+
+.debug-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 8px;
+  font-size: 11px;
+  color: #44403c;
+}
+
+.debug-reason {
+  font-size: 11px;
+  color: #b91c1c;
+  background-color: #fff1f2;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid #fecdd3;
+  margin-top: 2px;
+}
+
+.debug-empty {
+  color: #78716c;
+  font-style: italic;
+  font-size: 11px;
+  padding: 6px 0;
+}
+
+.debug-notice {
+  font-size: 10px;
+  color: #78716c;
+  line-height: 1.35;
+}
+
 /* Responsive (Small mobile / iPhone SE) */
 @media (max-width: 380px) {
   .speedgps-app {

@@ -3,13 +3,14 @@
  * Sprint 4 / Adım 2
  */
 
-import { GPS_RELIABILITY_CONFIG } from './gpsReliability'
+import { GPS_RELIABILITY_CONFIG, getEffectiveDistanceThreshold } from './gpsReliability'
 import { type SpeedSource } from './speedEngine'
 
 export interface FilterSpeedOptions {
   source: SpeedSource
   timeDeltaSeconds?: number | null
   distanceMeters?: number | null
+  accuracyMeters?: number | null
 }
 
 export interface SpeedFilterResult {
@@ -79,7 +80,7 @@ export class SpeedFilter {
       }
     }
 
-    const { source, timeDeltaSeconds, distanceMeters } = options
+    const { source, timeDeltaSeconds, distanceMeters, accuracyMeters } = options
 
     // 2. Maksimum Gerçekçi Kara Hızı Denetimi (> 250 km/sa)
     if (rawSpeedKmh > GPS_RELIABILITY_CONFIG.MAX_REALISTIC_SPEED_KMH) {
@@ -93,18 +94,22 @@ export class SpeedFilter {
     // 3. Sabit Konum ve GPS Jitter / Titreme Filtresi
     // - source === 'gps': Platform GPS hızında (coords.speed) 1.0 km/sa altı donanım gürültüsü/ölü bölge kabul edilir;
     //   1.0 - 2.5 km/sa arasındaki gerçek yavaş yürüyüş hızları korunur.
-    // - source === 'haversine': Mesafe 2 metrenin altındaysa veya mesafe bilinmiyorken hız 2.5 km/sa altındaysa jitter kabul edilir.
-    //   Ancak doğrulanmış yer değiştirme (mesafe >= 2 metre) varsa yavaş hareket korunur.
+    // - source === 'haversine': Konum değişimi GPS hata payından veya taban 2.0 metreden küçükse jitter kabul edilir.
+    //   Doğrulanmış yer değiştirme eşiği aşılmadığı sürece koordinatlardan yapay hareket üretilmez.
+    const effectiveDistanceThreshold = getEffectiveDistanceThreshold(
+      source === 'haversine' ? accuracyMeters : null
+    )
+
     const hasSignificantDistance =
       distanceMeters !== undefined &&
       distanceMeters !== null &&
-      distanceMeters >= GPS_RELIABILITY_CONFIG.STATIONARY_DISTANCE_THRESHOLD_METERS
+      distanceMeters >= effectiveDistanceThreshold
 
     const isStationaryDistance =
       source === 'haversine' &&
       distanceMeters !== undefined &&
       distanceMeters !== null &&
-      distanceMeters < GPS_RELIABILITY_CONFIG.STATIONARY_DISTANCE_THRESHOLD_METERS
+      distanceMeters < effectiveDistanceThreshold
 
     const isStationarySpeed =
       source === 'gps'
@@ -128,7 +133,9 @@ export class SpeedFilter {
     }
 
     // 4. İvmelenme ve Anormal Hız Sıçraması (Spike) Denetimi
-    if (this.lastAcceptedSpeedKmh !== null && this.lastAcceptedSpeedKmh > 0) {
+    // NOT: Önceki kabul edilen hız 0 km/sa olsa dahi (dururken ani sıçrama), fiziksel sınırların
+    // üzerindeki hız artışları (ör. 1 saniyede 0'dan 86 km/sa'e sıçrama) reddedilir!
+    if (this.lastAcceptedSpeedKmh !== null) {
       const dt =
         timeDeltaSeconds && timeDeltaSeconds > 0 && Number.isFinite(timeDeltaSeconds)
           ? timeDeltaSeconds

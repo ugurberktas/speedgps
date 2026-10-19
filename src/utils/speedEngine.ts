@@ -16,6 +16,7 @@ import {
   msToKmh,
 } from './gpsMath'
 import {
+  GPS_RELIABILITY_CONFIG,
   isReliableGpsReading,
   isValidTimestampSequence,
 } from './gpsReliability'
@@ -105,6 +106,27 @@ export function resolveSpeed(
     }
   }
 
+  // Konum doğruluğu zayıfsa (> 25m) koordinatlardan yapay hız türetme
+  const accuracy = reading.coords.accuracy
+  if (
+    accuracy !== null &&
+    accuracy !== undefined &&
+    Number.isFinite(accuracy) &&
+    accuracy > GPS_RELIABILITY_CONFIG.MAX_HAVERSINE_ACCURACY_METERS
+  ) {
+    if (import.meta.env.DEV) {
+      console.debug(
+        `[SpeedGPS] Haversine hızı reddedildi: Konum doğruluğu zayıf (accuracy: ${accuracy.toFixed(1)}m > ${GPS_RELIABILITY_CONFIG.MAX_HAVERSINE_ACCURACY_METERS}m)`
+      )
+    }
+    return {
+      speedKmh: null,
+      speedMs: null,
+      source: 'none',
+      newPoint: currentPoint,
+    }
+  }
+
   const speedMs = calculateSpeedBetweenPoints(previousPoint, currentPoint)
 
   if (speedMs !== null) {
@@ -184,7 +206,20 @@ export class GpsSpeedTracker {
       source: rawResult.source,
       timeDeltaSeconds,
       distanceMeters,
+      accuracyMeters: reading.coords.accuracy,
     })
+
+    if (import.meta.env.DEV) {
+      if (filterResult.isSpikeRejected) {
+        console.debug(
+          `[SpeedGPS] Hız sıçraması reddedildi: raw=${rawResult.speedKmh} km/sa, delta=${distanceMeters?.toFixed(1)}m, dt=${timeDeltaSeconds.toFixed(1)}s, source=${rawResult.source}, accuracy=${reading.coords.accuracy ?? 'null'}m`
+        )
+      } else if (filterResult.isStationaryClamped) {
+        console.debug(
+          `[SpeedGPS] Durgunluk/titreme sıfırlandı: raw=${rawResult.speedKmh} km/sa, delta=${distanceMeters?.toFixed(1)}m, source=${rawResult.source}, accuracy=${reading.coords.accuracy ?? 'null'}m`
+        )
+      }
+    }
 
     this.currentSpeedKmh = filterResult.filteredSpeedKmh
 

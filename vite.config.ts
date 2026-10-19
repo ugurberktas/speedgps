@@ -13,6 +13,7 @@ export default defineConfig({
         name: 'SpeedGPS',
         short_name: 'SpeedGPS',
         description: 'Gerçek zamanlı ve güvenilir GPS hız göstergesi',
+        lang: 'tr',
         theme_color: '#ffffff',
         background_color: '#ffffff',
         display: 'standalone',
