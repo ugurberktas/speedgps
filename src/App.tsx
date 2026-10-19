@@ -18,6 +18,8 @@ import {
   updateSessionStats,
   resetSessionStats,
 } from './utils/measurementSession'
+import { WakeLockManager } from './utils/wakeLock'
+import { getActiveLocationQuality } from './utils/locationQuality'
 import './App.css'
 
 export type GpsStatus = 'durduruldu' | 'bekleniyor' | 'aktif' | 'hata'
@@ -36,6 +38,7 @@ function App() {
   const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null)
   const [speedSource, setSpeedSource] = useState<SpeedSource>('none')
   const [isStale, setIsStale] = useState<boolean>(false)
+  const [currentAccuracy, setCurrentAccuracy] = useState<number | null>(null)
 
   // Oturum istatistikleri ve süre
   const [sessionStats, setSessionStats] = useState<SessionStats>(INITIAL_SESSION_STATS)
@@ -50,6 +53,12 @@ function App() {
   const trackerRef = useRef<GpsSpeedTracker>(new GpsSpeedTracker())
   const lastCoordsRef = useRef<Coordinates | null>(null)
   const lastFixTimestampRef = useRef<number | null>(null)
+  const wakeLockRef = useRef<WakeLockManager>(new WakeLockManager())
+  const gpsStatusRef = useRef<GpsStatus>(gpsStatus)
+
+  useEffect(() => {
+    gpsStatusRef.current = gpsStatus
+  }, [gpsStatus])
 
   // Süre Sayacı ve GPS Bayatlık (Staleness) Denetleyicisi
   useEffect(() => {
@@ -73,15 +82,23 @@ function App() {
     return () => clearInterval(interval)
   }, [gpsStatus])
 
-  // Bileşen kapandığında GPS takibini ve oturumu temizle
+  // Bileşen kapandığında GPS takibini, Wake Lock'u ve oturumu temizle
   useEffect(() => {
     const tracker = trackerRef.current
+    const wakeLock = wakeLockRef.current
+
+    wakeLock.initVisibilityListener(() => {
+      const status = gpsStatusRef.current
+      return status === 'aktif' || status === 'bekleniyor'
+    })
+
     return () => {
       if (watchIdRef.current !== null) {
         navigator.geolocation.clearWatch(watchIdRef.current)
         watchIdRef.current = null
       }
       tracker.reset()
+      wakeLock.destroy()
       lastCoordsRef.current = null
       lastFixTimestampRef.current = null
     }
@@ -101,9 +118,13 @@ function App() {
     setElapsedSeconds(0)
     setSpeedKmh(null)
     setSpeedSource('none')
+    setCurrentAccuracy(null)
     setErrorMessage(null)
     setFeedbackNotice(null)
     setGpsStatus('bekleniyor')
+
+    // Screen Wake Lock talep et (tarayıcı destekliyorsa ekran açık tutulur)
+    void wakeLockRef.current.requestLock()
 
     if (!('geolocation' in navigator)) {
       setErrorMessage('Tarayıcınız Geolocation API özelliğini desteklemiyor.')
@@ -146,6 +167,7 @@ function App() {
             // Geçersiz / güvenilmez okuma: güncellik zaman damgası YENİLENMEZ
             setSpeedKmh(null)
             setSpeedSource('none')
+            setCurrentAccuracy(null)
             return
           }
 
@@ -154,6 +176,11 @@ function App() {
           setErrorMessage(null)
           lastFixTimestampRef.current = Date.now()
           setIsStale(false)
+          setCurrentAccuracy(
+            typeof position.coords.accuracy === 'number' && Number.isFinite(position.coords.accuracy)
+              ? position.coords.accuracy
+              : null
+          )
 
           // Hız motoru ile hızı hesapla (doğruluk, koordinat ve zaman kontrolleri dahil)
           const result = trackerRef.current.processReading(readingInput)
@@ -209,6 +236,7 @@ function App() {
           lastCoordsRef.current = null
           lastFixTimestampRef.current = null
           setIsStale(false)
+          setCurrentAccuracy(null)
           setErrorMessage(message)
           setGpsStatus('hata')
           setSpeedKmh(null)
@@ -218,6 +246,8 @@ function App() {
             navigator.geolocation.clearWatch(watchIdRef.current)
             watchIdRef.current = null
           }
+
+          void wakeLockRef.current.releaseLock()
         },
         {
           enableHighAccuracy: true,
@@ -232,15 +262,19 @@ function App() {
       lastCoordsRef.current = null
       lastFixTimestampRef.current = null
       setIsStale(false)
+      setCurrentAccuracy(null)
       setErrorMessage('GPS takibi başlatılırken beklenmeyen bir hata oluştu.')
       setGpsStatus('hata')
       setSpeedKmh(null)
       setSpeedSource('none')
+      void wakeLockRef.current.releaseLock()
     }
   }
 
   // GPS Takibini Durdur
   const stopTracking = () => {
+    void wakeLockRef.current.releaseLock()
+
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current)
       watchIdRef.current = null
@@ -250,6 +284,7 @@ function App() {
     lastCoordsRef.current = null
     lastFixTimestampRef.current = null
     setIsStale(false)
+    setCurrentAccuracy(null)
     setGpsStatus('durduruldu')
     setSpeedKmh(null)
     setSpeedSource('none')
@@ -295,6 +330,7 @@ function App() {
   }
 
   const isTracking = gpsStatus === 'aktif' || gpsStatus === 'bekleniyor'
+  const locationQuality = getActiveLocationQuality(currentAccuracy, gpsStatus, isStale)
 
   return (
     <div className="speedgps-app">
@@ -308,9 +344,23 @@ function App() {
           <span className="brand-tag">v3.0</span>
         </div>
 
-        <div className={`status-pill status-${gpsStatus}`}>
-          <span className="status-dot" aria-hidden="true" />
-          <span>{STATUS_LABELS[gpsStatus]}</span>
+        <div className="header-status-group">
+          <div className={`status-pill status-${gpsStatus}`}>
+            <span className="status-dot" aria-hidden="true" />
+            <span>{STATUS_LABELS[gpsStatus]}</span>
+          </div>
+
+          {locationQuality && (
+            <div
+              className={`quality-badge quality-${locationQuality.level}`}
+              title={`Konum kalitesi: ${locationQuality.label} (±${locationQuality.accuracyMeters.toFixed(0)}m, hız doğruluğu değildir)`}
+            >
+              <span className="quality-dot" aria-hidden="true" />
+              <span className="quality-label">
+                Konum kalitesi: <strong>{locationQuality.label}</strong>
+              </span>
+            </div>
+          )}
         </div>
       </header>
 
