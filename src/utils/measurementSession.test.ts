@@ -129,7 +129,7 @@ describe('measurementSession Utilities', () => {
   })
 
   describe('Dururken Ölçüm Başlatma ve 0 km/sa Senaryoları', () => {
-    it('1. Dururken 0 km/sa: Geçerli 0 değeri Yeni Ölçüm ile kaydedilebilir ve falsy olarak reddedilmez', () => {
+    it('1. Dururken 0 km/sa: Geçerli 0 değeri Hızı Kaydet ile kaydedilebilir ve falsy olarak reddedilmez', () => {
       const speedKmh = 0
       const gpsStatus = 'aktif'
       const isStale = false
@@ -150,7 +150,7 @@ describe('measurementSession Utilities', () => {
       expect(stats.speedSamplesCount).toBe(1)
     })
 
-    it('2. Hareket hâlinde geçerli hız: Araç ve yürüyüş hızları Yeni Ölçüm ile kaydedilir', () => {
+    it('2. Hareket hâlinde geçerli hız: Araç ve yürüyüş hızları Hızı Kaydet ile kaydedilir', () => {
       // 54 km/sa araç hızı
       expect(canSaveMeasurement(54, 'aktif', false)).toBe(true)
       const recordCar = createSavedMeasurement(1, 54)
@@ -179,7 +179,7 @@ describe('measurementSession Utilities', () => {
       expect(canSaveMeasurement(-1, 'aktif', false)).toBe(false)
     })
 
-    it('4. Yeni Ölçüm sonrası oturum sıfırlama: İstatistikler sıfırlanır ancak kayıtlı geçmiş korunur', () => {
+    it('4. Oturum sıfırlama: İstatistikler sıfırlanır ancak kayıtlı geçmiş korunur', () => {
       let stats = updateSessionStats(INITIAL_SESSION_STATS, 60, 200)
       expect(stats.maxSpeedKmh).toBe(60)
 

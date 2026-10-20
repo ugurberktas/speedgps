@@ -37,7 +37,7 @@ export function getLocationQuality(
     accuracy === undefined ||
     typeof accuracy !== 'number' ||
     !Number.isFinite(accuracy) ||
-    accuracy <= 0
+    accuracy < 0
   ) {
     return null
   }

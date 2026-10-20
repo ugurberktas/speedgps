@@ -1,8 +1,8 @@
-# SpeedGPS 🧭⚡
+# SpeedGPS 🧭⚡ `v3.0`
 
-Gerçek zamanlı, güvenilir ve gizlilik odaklı modern web tabanlı GPS hız göstergesi (Speedometer) ve rota oturum takip uygulaması.
+Gerçek zamanlı, güvenilir ve gizlilik odaklı modern web tabanlı GPS hız göstergesi (Speedometer), araç HUD ekranı ve rota oturum takip uygulaması.
 
-SpeedGPS; araç sürüşü, bisiklet, koşu veya yürüyüş aktivitelerinde anlık hızınızı, maksimum ve ortalama hızınızı, kat ettiğiniz mesafeyi ve süreyi yüksek doğrulukla takip etmenizi sağlar.
+SpeedGPS; araç sürüşü, bisiklet, koşu veya yürüyüş aktivitelerinde anlık hızınızı, maksimum ve ortalama hızınızı, kat ettiğiniz mesafeyi ve süreyi yüksek doğruluk ve yerel gizlilikle takip etmenizi sağlar.
 
 ---
 
@@ -11,6 +11,18 @@ SpeedGPS; araç sürüşü, bisiklet, koşu veya yürüyüş aktivitelerinde anl
 - **Hibrit Hız Motoru:**
   - Cihazınızın donanım GPS/GNSS Doppler hızını (`coords.speed`) öncelikli kullanır.
   - Donanım hızı desteklenmediğinde veya null olduğunda akıllı ve filtrelenmiş Haversine formülüyle koordinatlardan güvenilir hız üretir.
+- **Araba Kadranı (Hız Göstergesi):**
+  - Dijital hız değerinin etrafında dinamik turuncu ilerleme yayı (progress arc) ve seçili hız birimine göre otomatik ölçeklenen modern yarım daire gösterge.
+- **Hız Birimleri (km/sa, mph, m/s):**
+  - Tek tıkla anlık hız, maksimum hız, ortalama hız ve geçmiş kayıtlarında birim dönüşümü. Dahili hesaplama km/sa temelinde korunur.
+- **Yürüyüş ve Koşu Temposu (Pace Modu):**
+  - Koşu ve yürüyüş sporcuları için kilometre başına harcanan süreyi hesaplayan canlı tempo gösterimi (`min/km`).
+- **Araç HUD Modu (Head-Up Display):**
+  - Gece sürüşlerinde telefon ekranını araç ön camına yansıtmak üzere yatay aynalanmış (mirrored), yüksek kontrastlı, saf siyah arka planlı tam ekran sürüş arayüzü.
+- **Sade Ölçüm Butonları & Hızı Kaydet:**
+  - Başlangıçta tek, büyük ve erişilebilir turuncu "Başlat" butonu.
+  - Ölçüm aktifken soluk/pasif "Başlat" ve belirgin kırmızı "Durdur" düzeni (%50 / %50).
+  - Canlı takibi bölmeden ve oturum istatistiklerini sıfırlamadan geçmişe anlık hız ekleyen "Hızı Kaydet" butonu.
 - **Akıllı Gürültü ve Titreme Koruması (Stationary Jitter Protection):**
   - Masa başında veya kırmızı ışıkta beklerken meydana gelen GPS sapmalarını (örneğin dururken sahte 80+ km/sa sıçramaları veya yapay mesafe artışlarını) engeller.
   - Zayıf doğruluklu (>25m) sıçramaları eler, gerçek 0 km/sa değerini korur.
@@ -24,9 +36,9 @@ SpeedGPS; araç sürüşü, bisiklet, koşu veya yürüyüş aktivitelerinde anl
 - **Zaman Ağırlıklı Ortalama Hız & İstatistikler:**
   - GPS örneklerinin düzensiz gelmesi durumunda dahi süreyi ve duraklama anlarını hesaba katan integral tabanlı doğru ortalama hız hesabı.
 - **Ölçüm Geçmişi & Özeti Kopyala:**
-  - Anlık ölçümleri tek dokunuşla kaydetme, sayaç kontrolü ve tek tıkla panoya metin özeti kopyalama.
+  - Anlık hız kayıtları, sayaç kontrolü ve hata korumalı tek tıkla panoya metin özeti kopyalama.
 - **Progressive Web App (PWA):**
-  - Mobil cihazlarda ana ekrana eklenebilir, tam ekran yerel uygulama deneyimi sunar.
+  - Mobil cihazlarda ana ekrana eklenebilir, çevrimdışı önbelleğe sahip tam ekran yerel uygulama deneyimi sunar.
 
 ---
 
@@ -60,10 +72,10 @@ Uygulama varsayılan olarak `http://localhost:5173` adresinde çalışacaktır.
 ### Testleri Çalıştırma
 
 ```bash
-# Vitest birim ve entegrasyon testleri (170+ test)
+# Vitest birim ve entegrasyon testleri (200+ test)
 npm test
 
-# Playwright E2E UI testleri (Masaüstü ve Mobil)
+# Playwright E2E UI testleri (32 senaryo - Masaüstü ve Mobil)
 npm run test:e2e
 
 # Linter kontrolü

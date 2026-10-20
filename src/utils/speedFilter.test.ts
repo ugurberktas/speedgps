@@ -120,7 +120,7 @@ describe('GPS Speed Filter (speedFilter)', () => {
       expect(recoveryRes.isSpikeRejected).toBe(false)
     })
 
-    it('7. Yeni Ölçüm sonrası filtre durumunun sıfırlanması: reset() tüm dahili hafızayı temizler', () => {
+    it('7. Oturum sıfırlama sonrası filtre durumunun sıfırlanması: reset() tüm dahili hafızayı temizler', () => {
       const filter = new SpeedFilter()
 
       filter.filter(60, { source: 'haversine', timeDeltaSeconds: 1 })
@@ -129,7 +129,7 @@ describe('GPS Speed Filter (speedFilter)', () => {
       expect(filter.getMedianWindow().length).toBeGreaterThan(0)
       expect(filter.getEmaSpeed()).not.toBeNull()
 
-      // Yeni Ölçüm yapıldı
+      // Ölçüm oturumu sıfırlandı
       filter.reset()
       expect(filter.getLastAcceptedSpeed()).toBeNull()
       expect(filter.getMedianWindow()).toEqual([])
@@ -310,21 +310,124 @@ describe('GPS Speed Filter (speedFilter)', () => {
         // 1 saniyede 40 -> 190 km/sa anormal GPS sıçraması
         const spikeRes = filter.filter(190, { source: 'gps', timeDeltaSeconds: 1 })
         expect(spikeRes.isSpikeRejected).toBe(true)
-        // Filtrelenmiş hız önceki kabul edilen güvenilir hızı korur
+        // Filtrelenmiş hız görsel süreklilik için önceki kabul edilen güvenilir hızı korur
         expect(spikeRes.filteredSpeedKmh).toBe(40)
 
-        // İstatistiğe giren hız 40 km/sa'dir, 190 km/sa kesinlikle girmez
-        stats = updateSessionStats(stats, spikeRes.filteredSpeedKmh, 11)
+        // V3 Aşama 3 / B1 Kuralı: Reddedilen örnekler (isSpikeRejected === true) istatistikleri ve mesafeyi değiştirmez
+        if (!spikeRes.isSpikeRejected) {
+          stats = updateSessionStats(stats, spikeRes.filteredSpeedKmh, 11)
+        }
         expect(stats.maxSpeedKmh).toBe(40)
         expect(stats.avgSpeedKmh).toBe(40)
+        expect(stats.distanceMeters).toBe(11)
 
         // 250 km/sa üzeri fiziksel imkansız tekil sıçrama (320 km/sa)
         const superSpike = filter.filter(320, { source: 'gps', timeDeltaSeconds: 1 })
         expect(superSpike.isSpikeRejected).toBe(true)
         expect(superSpike.filteredSpeedKmh).toBe(40)
 
-        stats = updateSessionStats(stats, superSpike.filteredSpeedKmh, 11)
+        if (!superSpike.isSpikeRejected) {
+          stats = updateSessionStats(stats, superSpike.filteredSpeedKmh, 11)
+        }
         expect(stats.maxSpeedKmh).toBe(40)
+        expect(stats.distanceMeters).toBe(11)
+      })
+    })
+
+    describe('6. V3 Aşama 3 / Görev 2: Yanlış Hıza Kilitlenmeyi Önleme ve Yeniden Edinim (Codex B2/P1)', () => {
+      it('1. Yanlış başlangıç hızı (120 km/sa) sonrası ardışık tutarlı örneklerle (36 km/sa) filtre güvenle toparlanır', () => {
+        const filter = new SpeedFilter()
+
+        // İlk okuma yanlışlıkla 120 km/sa olarak kabul edildi
+        const first = filter.filter(120, { source: 'gps', timeDeltaSeconds: 1 })
+        expect(first.filteredSpeedKmh).toBe(120)
+
+        // 1. Örnek: 36 km/sa (120'ye göre ani sıçrama -> ilk ret)
+        const s1 = filter.filter(36, { source: 'gps', timeDeltaSeconds: 1 })
+        expect(s1.isSpikeRejected).toBe(true)
+        expect(s1.filteredSpeedKmh).toBe(120)
+
+        // 2. Örnek: 36 km/sa
+        const s2 = filter.filter(36, { source: 'gps', timeDeltaSeconds: 1 })
+        expect(s2.isSpikeRejected).toBe(true)
+
+        // 3. Örnek: 36 km/sa (3. ardışık tutarlı örnek -> re-acquisition tetiklenir)
+        const s3 = filter.filter(36, { source: 'gps', timeDeltaSeconds: 1 })
+        expect(s3.isSpikeRejected).toBe(false)
+        expect(s3.filteredSpeedKmh).toBe(36)
+
+        // Sonraki örnekler normal şekilde 36 km/sa olarak devam eder
+        for (let i = 4; i <= 20; i++) {
+          const sn = filter.filter(36, { source: 'gps', timeDeltaSeconds: 1 })
+          expect(sn.filteredSpeedKmh).toBe(36)
+          expect(sn.isSpikeRejected).toBe(false)
+        }
+      })
+
+      it('2. Tekil aşırı hız sıçramaları (Spike) reddedilmeye devam eder ve re-acquisition tetiklemez', () => {
+        const filter = new SpeedFilter()
+        filter.filter(40, { source: 'gps', timeDeltaSeconds: 1 })
+
+        // Tekil sıçrama (180 km/sa)
+        const spike = filter.filter(180, { source: 'gps', timeDeltaSeconds: 1 })
+        expect(spike.isSpikeRejected).toBe(true)
+        expect(spike.filteredSpeedKmh).toBe(40)
+
+        // Hemen ardından normal hız (40 km/sa) gelince sıçrama resetlenir
+        const normal = filter.filter(40, { source: 'gps', timeDeltaSeconds: 1 })
+        expect(normal.isSpikeRejected).toBe(false)
+        expect(normal.filteredSpeedKmh).toBe(40)
+      })
+
+      it('3. Gerçek 0 -> hareket ve hareket -> 0 geçişleri gecikmesiz ve kesintisiz korunur', () => {
+        const filter = new SpeedFilter()
+
+        // 0 km/sa
+        const z1 = filter.filter(0, { source: 'gps', timeDeltaSeconds: 1 })
+        expect(z1.filteredSpeedKmh).toBe(0)
+
+        // Harekete başlama (15 km/sa)
+        const move1 = filter.filter(15, { source: 'gps', timeDeltaSeconds: 1 })
+        expect(move1.filteredSpeedKmh).toBe(15)
+        expect(move1.isSpikeRejected).toBe(false)
+
+        // 35 km/sa'e hızlanma
+        const move2 = filter.filter(35, { source: 'gps', timeDeltaSeconds: 1 })
+        expect(move2.filteredSpeedKmh).toBe(35)
+
+        // Tam duruş (0 km/sa)
+        const stop = filter.filter(0, { source: 'gps', timeDeltaSeconds: 1 })
+        expect(stop.filteredSpeedKmh).toBe(0)
+        expect(stop.isSpikeRejected).toBe(false)
+      })
+
+      it('4. Düzensiz GPS zaman aralıklarında (500ms, 2s, 3s) filtre kilitlenmez', () => {
+        const filter = new SpeedFilter()
+
+        // 50 km/sa ile seyir
+        filter.filter(50, { source: 'gps', timeDeltaSeconds: 1 })
+
+        // 2 saniye sonra 70 km/sa (dt=2 -> allowedDelta >= 108 km/sa)
+        const step2s = filter.filter(70, { source: 'gps', timeDeltaSeconds: 2 })
+        expect(step2s.filteredSpeedKmh).toBe(70)
+        expect(step2s.isSpikeRejected).toBe(false)
+
+        // 500ms sonra 75 km/sa (dt=0.5 -> taban tolerans 35 km/sa)
+        const step500ms = filter.filter(75, { source: 'gps', timeDeltaSeconds: 0.5 })
+        expect(step500ms.filteredSpeedKmh).toBe(75)
+        expect(step500ms.isSpikeRejected).toBe(false)
+      })
+
+      it('5. 250 km/sa üzerindeki aşırı değerler hiçbir zaman re-acquisition ile kabul edilemez', () => {
+        const filter = new SpeedFilter()
+        filter.filter(50, { source: 'gps', timeDeltaSeconds: 1 })
+
+        // 5 kez üst üste 280 km/sa gelse bile asla kabul edilmez
+        for (let i = 0; i < 5; i++) {
+          const res = filter.filter(280, { source: 'gps', timeDeltaSeconds: 1 })
+          expect(res.isSpikeRejected).toBe(true)
+          expect(res.filteredSpeedKmh).toBe(50)
+        }
       })
     })
   })

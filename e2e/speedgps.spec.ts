@@ -24,9 +24,17 @@ declare global {
   interface Window {
     __geoListeners: MockGeoListener[]
     __emitGps: (position: MockPosition) => void
+    __emitGpsError?: (error: GeolocationPositionError) => void
+    __activeWatchers?: Record<number, { success: MockGeoListener; error?: PositionErrorCallback | null }>
+    __activeWatcherCount?: number
+    __clearWatchCallCount?: number
+    __lastClearedWatchId?: number | null
     __fullscreenCallCount: number
     __exitFullscreenCallCount: number
     __orientationLocked: string | null
+    __orientationLockCallCount?: number
+    __orientationUnlockCallCount?: number
+    __watchCallCount?: number
   }
 
   interface Element {
@@ -456,6 +464,10 @@ test.describe('SpeedGPS — Sprint 7: UI ve Fonksiyonel Testler', () => {
     // Kesinti durumunda eski 72 değeri canlıymış gibi kalmamalı, "--" olmalı
     await expect(speedNumber).toHaveText('--')
     await expect(page.locator('.speed-subtext')).toContainText('sinyal bekleniyor')
+
+    // Kesinti durumunda kullanıcıya yanıltıcı "GPS Aktif" rozeti gösterilmemeli, "Sinyal Bekleniyor..." olmalı
+    await expect(page.locator('.status-pill')).toHaveText(/Sinyal Bekleniyor/)
+    await expect(page.locator('.status-pill')).not.toHaveClass(/status-aktif/)
   })
 
   test('8. Mobil ve masaüstü ekranlarda yatay taşma (horizontal overflow) veya bozuk buton oluşmuyor', async ({
@@ -854,8 +866,10 @@ test.describe('SpeedGPS — Sprint 7: UI ve Fonksiyonel Testler', () => {
     await exitBtn.click()
     await expect(hudOverlay).not.toBeVisible()
 
-    // 3. Ölçümü başlat ve 54 km/sa (15 m/s) canlı hız verisi gönder
-    await page.getByRole('button', { name: 'Başlat' }).click()
+    // HUD açılışı ölçümü otomatik başlattı (V3 Madde 14)
+    await expect(page.getByRole('button', { name: 'Durdur' })).toBeVisible()
+
+    // 3. 54 km/sa (15 m/s) canlı hız verisi gönder
     await page.evaluate(() => {
       window.__emitGps({
         coords: {
@@ -1189,13 +1203,19 @@ test.describe('SpeedGPS — Sprint 7: UI ve Fonksiyonel Testler', () => {
     await expect(startBtn).toBeEnabled()
     await expect(stopBtn).not.toBeVisible()
 
-    // 2. Ölçüm başlamadan "Hızı Kaydet"e basılırsa kayıt yapılmaz ve uyarı verilir
+    // 2. Ölçüm başlamadan "Hızı Kaydet"e basılırsa kayıt yapılmaz ve Ölçüm Geçmişi bölümünde uyarı verilir
     await saveSpeedBtn.click()
-    await expect(page.locator('.alert-notice')).toContainText('Ölçüm durdurulduğu için hız kaydedilemiyor')
+    const historyNotice = page.locator('.history-notice-banner')
+    await expect(historyNotice).toBeVisible()
+    await expect(historyNotice).toContainText(
+      'Ölçüm durdurulduğu için hız kaydedilemiyor. Lütfen önce Başlat butonuna basın.'
+    )
+    await expect(page.locator('.alert-notice')).not.toBeVisible()
     await expect(page.locator('.history-item')).toHaveCount(0)
 
-    // 3. "Başlat" butonuna basılır
+    // 3. "Başlat" butonuna basılır ve önceki kayıt uyarısı temizlenir
     await startBtn.click()
+    await expect(historyNotice).not.toBeVisible()
 
     // 4. İki eşit buton oluşur: sol Başlat (disabled), sağ Durdur (aktif kırmızı)
     await expect(startBtn).toBeVisible()
@@ -1269,7 +1289,1501 @@ test.describe('SpeedGPS — Sprint 7: UI ve Fonksiyonel Testler', () => {
     await startBtn.click()
     await expect(historyItems).toHaveCount(2)
   })
+
+  test('16. V3 Aşama 1: Özeti Kopyala hata yönetimi ve textarea temizliği', async ({ page }) => {
+    await page.addInitScript(() => {
+      window.__geoListeners = []
+      const mockGeolocation = {
+        watchPosition: (success: MockGeoListener) => {
+          window.__geoListeners.push(success)
+          return 116
+        },
+        clearWatch: () => {},
+        getCurrentPosition: () => {},
+      }
+      Object.defineProperty(navigator, 'geolocation', {
+        value: mockGeolocation,
+        configurable: true,
+      })
+
+      window.__emitGps = (pos: MockPosition) => {
+        for (const listener of window.__geoListeners) {
+          listener(pos)
+        }
+      }
+
+      // Clipboard API'yi ve execCommand'i hata dönecek şekilde mock'la
+      Object.defineProperty(navigator, 'clipboard', {
+        value: {
+          writeText: async () => {
+            throw new Error('Clipboard access denied')
+          },
+        },
+        configurable: true,
+      })
+      document.execCommand = () => false
+    })
+
+    await page.goto('/')
+
+    // Canlı GPS başlat ve kayıt oluştur
+    await page.getByRole('button', { name: 'Başlat' }).click()
+    await page.evaluate(() => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0082,
+          longitude: 28.9784,
+          accuracy: 5,
+          speed: 10.0,
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp: Date.now(),
+      })
+    })
+
+    await page.getByRole('button', { name: 'Hızı Kaydet' }).click()
+    await expect(page.locator('.history-item')).toHaveCount(1)
+
+    // "Özeti Kopyala" butonuna bas
+    const copyBtn = page.getByRole('button', { name: 'Özeti Kopyala' })
+    await copyBtn.click()
+
+    // execCommand false döndüğü için başarı bildirimi DEĞİL, hata bildirimi görünmeli
+    const alertNotice = page.locator('.alert-notice')
+    await expect(alertNotice).toBeVisible()
+    await expect(alertNotice).toContainText('Özet panoya kopyalanamadı')
+    await expect(alertNotice).not.toContainText('panoya kopyalandı')
+
+    // Geçici textarea öğesinin DOM'da kalmadığı (finally ile temizlendiği) doğrulanmalı
+    const textareaCount = await page.locator('textarea').count()
+    expect(textareaCount).toBe(0)
+  })
+
+  test('17. V3 Aşama 1: HUD birim senkronizasyonu ve çıkış sonrası birimin korunması', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      window.__geoListeners = []
+      const mockGeolocation = {
+        watchPosition: (success: MockGeoListener) => {
+          window.__geoListeners.push(success)
+          return 117
+        },
+        clearWatch: () => {},
+        getCurrentPosition: () => {},
+      }
+      Object.defineProperty(navigator, 'geolocation', {
+        value: mockGeolocation,
+        configurable: true,
+      })
+
+      window.__emitGps = (pos: MockPosition) => {
+        for (const listener of window.__geoListeners) {
+          listener(pos)
+        }
+      }
+    })
+
+    await page.goto('/')
+
+    // 1. Ana ekranda birimi 'mph' olarak seç
+    const mphBtn = page.getByRole('radio', { name: 'mph' })
+    await mphBtn.click()
+
+    // 2. Canlı GPS başlat ve 72 km/sa (20 m/s) hız gönder (72 km/sa ≈ 45 mph)
+    await page.getByRole('button', { name: 'Başlat' }).click()
+    await page.evaluate(() => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0082,
+          longitude: 28.9784,
+          accuracy: 5,
+          speed: 20.0,
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp: Date.now(),
+      })
+    })
+
+    await expect(page.locator('.speed-number')).toHaveText('45')
+
+    // 3. HUD modunu aç -> mph ve 45 göstermeli
+    await page.getByRole('button', { name: 'Araç HUD Modunu Aç' }).click()
+    const hudOverlay = page.locator('.hud-overlay')
+    await expect(hudOverlay).toBeVisible()
+    await expect(page.getByTestId('hud-speed')).toHaveText('45')
+    await expect(page.getByTestId('hud-unit')).toHaveText('mph')
+
+    // 4. HUD içindeyken birimi m/s olarak değiştir -> 20 ve m/s olmalı
+    await page.locator('.hud-mirrored-display').click()
+    await expect(page.getByTestId('hud-speed')).toHaveText('20')
+    await expect(page.getByTestId('hud-unit')).toHaveText('m/s')
+
+    // 5. HUD'dan çık -> ana ekranda seçili birim 'm/s' olarak korunmalı ve hız 20 olmalı
+    await page.getByRole('button', { name: 'HUD modundan çık' }).click()
+    await expect(hudOverlay).not.toBeVisible()
+    await expect(page.locator('.speed-number')).toHaveText('20')
+    await expect(page.locator('.speed-unit').first()).toHaveText('m/s')
+  })
+
+  test('18. V3 Aşama 2: Aktif ölçüm sırasında Gizlilik sayfasına geçiş, canlı durum bildirimi ve sayfadan Durdur kontrolü', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      window.__geoListeners = []
+      const mockGeolocation = {
+        watchPosition: (success: MockGeoListener) => {
+          window.__geoListeners.push(success)
+          return 101
+        },
+        clearWatch: () => {},
+        getCurrentPosition: () => {},
+      }
+      Object.defineProperty(navigator, 'geolocation', {
+        value: mockGeolocation,
+        configurable: true,
+      })
+      window.__emitGps = (pos: MockPosition) => {
+        for (const listener of window.__geoListeners) {
+          listener(pos)
+        }
+      }
+    })
+
+    await page.goto('/')
+
+    // 1. Ölçümü başlat ve geçerli hız gönder
+    await page.getByRole('button', { name: 'Başlat' }).click()
+    const now = Date.now()
+    await page.evaluate((t) => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0082,
+          longitude: 28.9784,
+          accuracy: 5,
+          speed: 54 / 3.6,
+          heading: 90,
+          altitude: 40,
+        },
+        timestamp: t,
+      })
+    }, now)
+
+    await expect(page.locator('.speed-number')).toHaveText('54')
+
+    // 2. Gizlilik ve KVKK sayfasına geç
+    await page.getByRole('link', { name: 'Gizlilik ve KVKK' }).click()
+    await expect(page).toHaveURL(/.*\/gizlilik/)
+
+    // 3. Arka planda aktif GPS ölçüm bildirim çubuğu ve Durdur butonu görünmeli
+    const trackingBanner = page.locator('.privacy-active-tracking-banner')
+    await expect(trackingBanner).toBeVisible()
+    await expect(trackingBanner).toContainText('Canlı GPS ölçümü arka planda çalışmaya devam ediyor')
+
+    const stopBtn = page.getByRole('button', { name: 'Canlı GPS ölçümünü durdur' })
+    await expect(stopBtn).toBeVisible()
+
+    // 4. Durdur butonuna tıkla -> bildirim çubuğu kapanmalı
+    await stopBtn.click()
+    await expect(trackingBanner).not.toBeVisible()
+
+    // 5. Ana ekrana dön -> durdurulmuş durum ve kaydedilen hız istatistikleri korunmalı
+    await page.getByRole('button', { name: 'Ana Ekrana Dön' }).first().click()
+    await expect(page.locator('.brand-title')).toBeVisible()
+    await expect(page.locator('.status-pill')).toContainText('Durduruldu')
+  })
+
+  test('19. V3 Aşama 2: Klavye erişilebilirliği (Hız/Tempo sekmeleri ve Hız Birimi ok tuşları ile geçiş)', async ({
+    page,
+  }) => {
+    await page.goto('/')
+
+    // 1. Hız sekmesine odaklan
+    const speedTab = page.locator('#tab-mode-speed')
+    await speedTab.focus()
+    await expect(speedTab).toBeFocused()
+
+    // 2. Sağ ok tuşuna bas -> Tempo sekmesine geçmeli
+    await page.keyboard.press('ArrowRight')
+    const paceTab = page.locator('#tab-mode-pace')
+    await expect(paceTab).toHaveAttribute('aria-selected', 'true')
+    await expect(page.locator('.pace-badge-info')).toBeVisible()
+
+    // 3. Sol ok tuşuna bas -> Hız sekmesine geri dönmeli
+    await page.keyboard.press('ArrowLeft')
+    await expect(speedTab).toHaveAttribute('aria-selected', 'true')
+    await expect(page.locator('.speed-unit-selector')).toBeVisible()
+
+    // 4. Hız biriminde ok tuşları ile gezin
+    const kmhRadio = page.locator('#radio-unit-kmh')
+    await kmhRadio.focus()
+    await expect(kmhRadio).toHaveAttribute('aria-checked', 'true')
+
+    await page.keyboard.press('ArrowRight')
+    const mphRadio = page.locator('#radio-unit-mph')
+    await expect(mphRadio).toHaveAttribute('aria-checked', 'true')
+
+    await page.keyboard.press('ArrowRight')
+    const msRadio = page.locator('#radio-unit-ms')
+    await expect(msRadio).toHaveAttribute('aria-checked', 'true')
+  })
 })
 
+test.describe('SpeedGPS V3 — Aşama 2 / Görev 2: HUD Otomatik Başlatma ve Oturum Koruma', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.clear()
+    })
+  })
 
+  test('1. Ölçüm kapalıyken HUD açıldığında otomatik başlar, bekleme durumu "--" ve sinyal metni gösterilir, GPS gelince canlı hız yansır', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      window.__geoListeners = []
+      const mockGeolocation = {
+        watchPosition: (success: MockGeoListener) => {
+          window.__geoListeners.push(success)
+          return window.__geoListeners.length
+        },
+        clearWatch: () => {},
+        getCurrentPosition: () => {},
+      }
+      Object.defineProperty(navigator, 'geolocation', {
+        value: mockGeolocation,
+        configurable: true,
+      })
+      window.__emitGps = (position: MockPosition) => {
+        window.__geoListeners.forEach((listener) => listener(position))
+      }
+    })
+
+    await page.goto('/')
+
+    // Başlangıçta ölçüm kapalıdır, tek büyük Başlat butonu vardır
+    const startBtn = page.getByRole('button', { name: 'Başlat' })
+    await expect(startBtn).toBeVisible()
+
+    // HUD butonuna tıkla
+    const hudBtn = page.getByRole('button', { name: 'HUD' })
+    await hudBtn.click()
+
+    // HUD açıldı
+    const hudOverlay = page.locator('.hud-overlay')
+    await expect(hudOverlay).toBeVisible()
+
+    // Henüz konum verisi alınmadığında HUD siyah boş bir ekran olmamalı:
+    // büyük "--" değeri, doğru hız birimi ve "GPS sinyali bekleniyor" durumu
+    const hudSpeed = page.getByTestId('hud-speed')
+    const hudUnit = page.getByTestId('hud-unit')
+    const hudStatus = page.getByTestId('hud-status')
+
+    await expect(hudSpeed).toHaveText('--')
+    await expect(hudUnit).toHaveText('km/sa')
+    await expect(hudStatus).toContainText('GPS sinyali bekleniyor')
+
+    // Canlı GPS verisi gönderildiğinde HUD filtrelenmiş canlı hızı göstermeli
+    await page.evaluate(() => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0082,
+          longitude: 28.9784,
+          accuracy: 5,
+          speed: 20.0, // 20 m/s = 72 km/sa
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp: Date.now(),
+      })
+    })
+
+    await expect(hudSpeed).toHaveText('72')
+    await expect(hudStatus).not.toBeVisible()
+
+    // 0 km/sa gönderildiğinde '0' olarak gösterilmeli
+    await page.evaluate(() => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0083,
+          longitude: 28.9785,
+          accuracy: 5,
+          speed: 0.0,
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp: Date.now() + 1000,
+      })
+    })
+    await expect(hudSpeed).toHaveText('0')
+
+    // HUD'dan Kapat butonu ile çık
+    const exitBtn = page.getByRole('button', { name: 'HUD modundan çık' })
+    await exitBtn.click()
+    await expect(hudOverlay).not.toBeVisible()
+
+    // HUD'dan çıkmak ölçümü durdurmamalı, sıfırlamamalı
+    // Ana ekranda Durdur butonu aktif olmalı ve Başlat butonu pasif olmalı
+    await expect(page.getByRole('button', { name: 'Durdur' })).toBeVisible()
+    await expect(page.locator('.btn-start-disabled')).toBeDisabled()
+  })
+
+  test('2. GPS izni reddedildiğinde HUD anlaşılır hata durumu gösterir ve kullanıcı çıkabilir', async ({
+    page,
+  }) => {
+    // Geolocation PERMISSION_DENIED dönecek şekilde mock'la
+    await page.addInitScript(() => {
+      const mockGeolocation = {
+        watchPosition: (
+          _success: PositionCallback,
+          error: PositionErrorCallback | null | undefined
+        ) => {
+          if (error) {
+            const err: GeolocationPositionError = {
+              code: 1, // PERMISSION_DENIED
+              message: 'User denied Geolocation',
+              PERMISSION_DENIED: 1,
+              POSITION_UNAVAILABLE: 2,
+              TIMEOUT: 3,
+            }
+            setTimeout(() => error(err), 50)
+          }
+          return 999
+        },
+        clearWatch: () => {},
+        getCurrentPosition: () => {},
+      }
+      Object.defineProperty(navigator, 'geolocation', {
+        value: mockGeolocation,
+        configurable: true,
+      })
+    })
+
+    await page.goto('/')
+
+    // Ölçüm kapalıyken doğrudan HUD butonuna tıkla
+    const hudBtn = page.getByRole('button', { name: 'HUD' })
+    await hudBtn.click()
+
+    // HUD açılmalı, kırılgan zincire takılmamalı
+    const hudOverlay = page.locator('.hud-overlay')
+    await expect(hudOverlay).toBeVisible()
+
+    // İzin reddi durumu HUD içinde belirgin ve anlaşılır olmalı
+    const hudStatus = page.getByTestId('hud-status')
+    await expect(hudStatus).toContainText('Konum izni reddedildi')
+    await expect(page.locator('.hud-top-error-badge')).toContainText('Konum izni reddedildi')
+
+    // Kullanıcı uygulamadan çıkmak zorunda kalmadan HUD'ı kapatabilmeli
+    const exitBtn = page.getByRole('button', { name: 'HUD modundan çık' })
+    await exitBtn.click()
+    await expect(hudOverlay).not.toBeVisible()
+
+    // Ana ekranda hata uyarısı görünür ve sayfa kullanılabilir durumdadır
+    await expect(page.locator('.alert-error')).toBeVisible()
+  })
+
+  test('3. Ölçüm zaten aktifken HUD açıldığında ikinci kez başlatmaz ve oturum istatistikleri korunur', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      window.__geoListeners = []
+      window.__watchCallCount = 0
+      const mockGeolocation = {
+        watchPosition: (success: MockGeoListener) => {
+          window.__watchCallCount = (window.__watchCallCount || 0) + 1
+          window.__geoListeners.push(success)
+          return window.__geoListeners.length
+        },
+        clearWatch: () => {},
+        getCurrentPosition: () => {},
+      }
+      Object.defineProperty(navigator, 'geolocation', {
+        value: mockGeolocation,
+        configurable: true,
+      })
+      window.__emitGps = (position: MockPosition) => {
+        window.__geoListeners.forEach((listener) => listener(position))
+      }
+    })
+
+    await page.goto('/')
+
+    // 1. Ana ekrandan başlat
+    await page.getByRole('button', { name: 'Başlat' }).click()
+
+    // İlk çağrı sayısı 1 olmalı
+    const initialWatchCount = await page.evaluate(() => window.__watchCallCount)
+    expect(initialWatchCount).toBe(1)
+
+    // 2. Canlı GPS verisi gönder (90 km/sa = 25 m/s)
+    await page.evaluate(() => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0082,
+          longitude: 28.9784,
+          accuracy: 5,
+          speed: 25.0, // 90 km/sa
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp: Date.now(),
+      })
+    })
+
+    // Ana ekranda hız 90 olmalı
+    await expect(page.locator('.speed-number')).toHaveText('90')
+
+    // 3. HUD butonuna tıkla
+    await page.getByRole('button', { name: 'HUD' }).click()
+    const hudOverlay = page.locator('.hud-overlay')
+    await expect(hudOverlay).toBeVisible()
+
+    // Ölçüm zaten aktifken HUD'a geçmek ikinci kez GPS takibi başlatmamalı
+    const postHudWatchCount = await page.evaluate(() => window.__watchCallCount)
+    expect(postHudWatchCount).toBe(1)
+
+    // Canlı hız HUD'da hemen 90 görünmeli
+    const hudSpeed = page.getByTestId('hud-speed')
+    const hudUnit = page.getByTestId('hud-unit')
+    await expect(hudSpeed).toHaveText('90')
+    await expect(hudUnit).toHaveText('km/sa')
+
+    // 4. HUD içinden birimi döngü ile değiştir (km/sa -> mph)
+    // 90 km/sa = ~55.92 mph -> 56 mph
+    await page.locator('.hud-mirrored-display').click()
+    await expect(hudSpeed).toHaveText('56')
+    await expect(hudUnit).toHaveText('mph')
+
+    // 5. HUD'dan çıkış yap
+    await page.getByRole('button', { name: 'HUD modundan çık' }).click()
+    await expect(hudOverlay).not.toBeVisible()
+
+    // Oturum süresi, canlı takip, seçili hız birimi (mph) ve istatistikler korunmalı
+    await expect(page.getByRole('button', { name: 'Durdur' })).toBeVisible()
+    await expect(page.locator('.speed-number')).toHaveText('56')
+    await expect(page.locator('#radio-unit-mph')).toHaveAttribute('aria-checked', 'true')
+  })
+})
+
+test.describe('SpeedGPS V3 — Aşama 2 / Görev 3: HUD Fullscreen, Orientation ve Erişilebilirlik Düzeltmeleri', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.clear()
+    })
+  })
+
+  test('1. Asenkron açılış/kapanış yarışı: requestFullscreen beklerken HUD kapatılırsa orientation.lock çağrılmaz ve tam ekran temizlenir', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      window.__geoListeners = []
+      window.__fullscreenCallCount = 0
+      window.__exitFullscreenCallCount = 0
+      window.__orientationLockCallCount = 0
+      window.__orientationUnlockCallCount = 0
+      window.__orientationLocked = null
+
+      const mockGeolocation = {
+        watchPosition: (success: MockGeoListener) => {
+          window.__geoListeners.push(success)
+          return window.__geoListeners.length
+        },
+        clearWatch: () => {},
+        getCurrentPosition: () => {},
+      }
+      Object.defineProperty(navigator, 'geolocation', {
+        value: mockGeolocation,
+        configurable: true,
+      })
+
+      // Gecikmeli requestFullscreen mock'u (150ms gecikme)
+      let activeFsElement: Element | null = null
+      Element.prototype.requestFullscreen = function () {
+        window.__fullscreenCallCount++
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            activeFsElement = document.documentElement
+            Object.defineProperty(document, 'fullscreenElement', {
+              get: () => activeFsElement,
+              configurable: true,
+            })
+            resolve()
+          }, 150)
+        })
+      }
+
+      Document.prototype.exitFullscreen = function () {
+        window.__exitFullscreenCallCount++
+        activeFsElement = null
+        Object.defineProperty(document, 'fullscreenElement', {
+          get: () => null,
+          configurable: true,
+        })
+        return Promise.resolve()
+      }
+
+      // Screen Orientation Mock
+      const mockOrientation = {
+        type: 'portrait-primary',
+        angle: 0,
+        lock: (orientation: string) => {
+          window.__orientationLockCallCount = (window.__orientationLockCallCount || 0) + 1
+          window.__orientationLocked = orientation
+          return Promise.resolve()
+        },
+        unlock: () => {
+          window.__orientationUnlockCallCount = (window.__orientationUnlockCallCount || 0) + 1
+          window.__orientationLocked = null
+        },
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => true,
+      }
+      Object.defineProperty(screen, 'orientation', {
+        value: mockOrientation,
+        configurable: true,
+      })
+    })
+
+    await page.goto('/')
+
+    // HUD'ı aç
+    const hudBtn = page.getByRole('button', { name: 'HUD' })
+    await hudBtn.click()
+
+    // requestFullscreen 150ms bekliyor; hemen (30ms içinde) Kapat butonuna bas
+    await page.waitForTimeout(30)
+    const exitBtn = page.getByRole('button', { name: 'HUD modundan çık' })
+    await exitBtn.click()
+
+    // Fullscreen Promise'inin çözülmesini bekle (200ms)
+    await page.waitForTimeout(200)
+
+    // HUD kapalı kalmalı
+    await expect(page.locator('.hud-overlay')).not.toBeVisible()
+
+    // Asenkron yarış koruması: orientation.lock ASLA çağrılmamış olmalı
+    const lockCount = await page.evaluate(() => window.__orientationLockCallCount)
+    expect(lockCount).toBe(0)
+
+    // Fullscreen açık kalmamış olmalı
+    const isFullscreen = await page.evaluate(() => document.fullscreenElement !== null)
+    expect(isFullscreen).toBe(false)
+  })
+
+  test('2. Fullscreen çıkış yönetimi: Native fullscreen çıkışı veya ESC ile HUD durumu senkronize kapanır', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      window.__geoListeners = []
+      window.__fullscreenCallCount = 0
+      window.__exitFullscreenCallCount = 0
+      window.__orientationLocked = null
+
+      const mockGeolocation = {
+        watchPosition: (success: MockGeoListener) => {
+          window.__geoListeners.push(success)
+          return window.__geoListeners.length
+        },
+        clearWatch: () => {},
+        getCurrentPosition: () => {},
+      }
+      Object.defineProperty(navigator, 'geolocation', {
+        value: mockGeolocation,
+        configurable: true,
+      })
+
+      let activeFs: Element | null = null
+      Element.prototype.requestFullscreen = function () {
+        window.__fullscreenCallCount++
+        activeFs = document.documentElement
+        Object.defineProperty(document, 'fullscreenElement', {
+          get: () => activeFs,
+          configurable: true,
+        })
+        return Promise.resolve()
+      }
+
+      Document.prototype.exitFullscreen = function () {
+        window.__exitFullscreenCallCount++
+        activeFs = null
+        Object.defineProperty(document, 'fullscreenElement', {
+          get: () => null,
+          configurable: true,
+        })
+        return Promise.resolve()
+      }
+
+      const mockOrientation = {
+        lock: (orientation: string) => {
+          window.__orientationLocked = orientation
+          return Promise.resolve()
+        },
+        unlock: () => {
+          window.__orientationLocked = null
+        },
+      }
+      Object.defineProperty(screen, 'orientation', {
+        value: mockOrientation,
+        configurable: true,
+      })
+    })
+
+    await page.goto('/')
+
+    // HUD'ı aç
+    await page.getByRole('button', { name: 'HUD' }).click()
+    const hudOverlay = page.locator('.hud-overlay')
+    await expect(hudOverlay).toBeVisible()
+
+    // Tarayıcının native fullscreen çıkışını simüle et (ESC veya tarayıcı butonu)
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'fullscreenElement', {
+        get: () => null,
+        configurable: true,
+      })
+      document.dispatchEvent(new Event('fullscreenchange'))
+    })
+
+    // HUD otomatik olarak kapanmalı ve durum tutarlı kalmalı
+    await expect(hudOverlay).not.toBeVisible()
+
+    // Yön kilidi bırakılmış olmalı
+    const lockedOrientation = await page.evaluate(() => window.__orientationLocked)
+    expect(lockedOrientation).toBeNull()
+
+    // Ölçüm oturumu kesilmemeli, Durdur butonu görünür kalmalı
+    await expect(page.getByRole('button', { name: 'Durdur' })).toBeVisible()
+  })
+
+  test('3. Klavye odağı ve modal erişilebilirliği: Odak Kapat butonuna taşınır, arka plan aria-hidden olur, Tab focus trap çalışır ve ESC sonrası odak geri döner', async ({
+    page,
+  }) => {
+    await page.goto('/')
+
+    // 1. HUD butonuna odaklan
+    const hudBtn = page.getByRole('button', { name: 'HUD' })
+    await hudBtn.focus()
+    await expect(hudBtn).toBeFocused()
+
+    // 2. Enter ile HUD'ı aç
+    await page.keyboard.press('Enter')
+    const hudOverlay = page.locator('.hud-overlay')
+    await expect(hudOverlay).toBeVisible()
+
+    // 3. Odak HUD içindeki "Kapat" butonuna taşınmış olmalı
+    const exitBtn = page.getByRole('button', { name: 'HUD modundan çık' })
+    await expect(exitBtn).toBeFocused()
+
+    // 4. Arka plan içeriği (header, main, footer) aria-hidden olmalı
+    await expect(page.locator('.speedgps-header')).toHaveAttribute('aria-hidden', 'true')
+    await expect(page.locator('.speed-card')).toHaveAttribute('aria-hidden', 'true')
+    await expect(page.locator('.speedgps-footer')).toHaveAttribute('aria-hidden', 'true')
+
+    // 5. Focus Trap: Tab ile HUD içi sonraki öğeye (aynalanmış hız/birim) geç
+    await page.keyboard.press('Tab')
+    const mirroredDisplay = page.locator('.hud-mirrored-display')
+    await expect(mirroredDisplay).toBeFocused()
+
+    // Tab ile tekrar Kapat butonuna dönmeli (dışarı kaçmamalı)
+    await page.keyboard.press('Tab')
+    await expect(exitBtn).toBeFocused()
+
+    // Shift+Tab ile geriye döngü testi
+    await page.keyboard.press('Shift+Tab')
+    await expect(mirroredDisplay).toBeFocused()
+
+    // 6. Escape ile HUD'dan çıkış
+    await page.keyboard.press('Escape')
+    await expect(hudOverlay).not.toBeVisible()
+
+    // Arka plan tekrar erişilebilir olmalı
+    await expect(page.locator('.speedgps-header')).toHaveAttribute('aria-hidden', 'false')
+    await expect(page.locator('.speed-card')).toHaveAttribute('aria-hidden', 'false')
+
+    // 7. Odak önceki kontrole (HUD butonu) geri dönmeli
+    await expect(hudBtn).toBeFocused()
+  })
+
+  test('4. Hızlı ardışık aç/kapa/aç senaryosunda yalnızca son istek geçerli kalır ve GPS oturumu korunur', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      window.__geoListeners = []
+      window.__watchCallCount = 0
+
+      const mockGeolocation = {
+        watchPosition: (success: MockGeoListener) => {
+          window.__watchCallCount = (window.__watchCallCount || 0) + 1
+          window.__geoListeners.push(success)
+          return window.__geoListeners.length
+        },
+        clearWatch: () => {},
+        getCurrentPosition: () => {},
+      }
+      Object.defineProperty(navigator, 'geolocation', {
+        value: mockGeolocation,
+        configurable: true,
+      })
+      window.__emitGps = (position: MockPosition) => {
+        window.__geoListeners.forEach((listener) => listener(position))
+      }
+    })
+
+    await page.goto('/')
+
+    // Hızlı aç -> kapa -> aç
+    const hudBtn = page.getByRole('button', { name: 'HUD' })
+    await hudBtn.click()
+    const exitBtn = page.getByRole('button', { name: 'HUD modundan çık' })
+    await exitBtn.click()
+    await hudBtn.click()
+
+    // Sonuçta HUD açık kalmalı
+    const hudOverlay = page.locator('.hud-overlay')
+    await expect(hudOverlay).toBeVisible()
+
+    // Çift geolocation takibi başlatılmamış olmalı (yalnızca 1 watchPosition)
+    const watchCount = await page.evaluate(() => window.__watchCallCount)
+    expect(watchCount).toBe(1)
+
+    // Canlı veri aktarımı HUD'da görünmeli
+    await page.evaluate(() => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0082,
+          longitude: 28.9784,
+          accuracy: 5,
+          speed: 15.0, // 54 km/sa
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp: Date.now(),
+      })
+    })
+
+    await expect(page.getByTestId('hud-speed')).toHaveText('54')
+  })
+})
+
+test.describe('SpeedGPS V3 — Aşama 2 / Görev 4: GPS Accuracy ve Timestamp Sınır Durumları', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.clear()
+      window.__geoListeners = []
+      const mockGeolocation = {
+        watchPosition: (success: MockGeoListener) => {
+          window.__geoListeners.push(success)
+          return window.__geoListeners.length
+        },
+        clearWatch: () => {},
+        getCurrentPosition: () => {},
+      }
+      Object.defineProperty(navigator, 'geolocation', {
+        value: mockGeolocation,
+        configurable: true,
+      })
+      window.__emitGps = (position: MockPosition) => {
+        window.__geoListeners.forEach((listener) => listener(position))
+      }
+    })
+  })
+
+  test('1. accuracy=0 geçerli bir sayı olarak kabul edilir ve "İyi" kalite rozetiyle canlı hız güncellenir', async ({
+    page,
+  }) => {
+    await page.goto('/')
+
+    // Ölçümü başlat
+    await page.getByRole('button', { name: 'Başlat' }).click()
+
+    const now = Date.now()
+    // accuracy: 0 değeriyle geçerli 36 km/sa (10 m/s) veri gönder
+    await page.evaluate((timestamp) => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0082,
+          longitude: 28.9784,
+          accuracy: 0,
+          speed: 10.0,
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp,
+      })
+    }, now)
+
+    // Hız 36 km/sa olmalı (accuracy=0 reddedilmemeli)
+    await expect(page.locator('.speed-number')).toHaveText('36')
+
+    // Konum kalitesi rozeti "İyi" olmalı ve title içinde ±0m yazmalı
+    const qualityBadge = page.locator('.quality-badge')
+    await expect(qualityBadge).toBeVisible()
+    await expect(qualityBadge).toHaveClass(/quality-iyi/)
+    await expect(qualityBadge).toContainText('İyi')
+    await expect(qualityBadge).toHaveAttribute('title', /±0m/)
+  })
+
+  test('2. Negatif doğruluk (örn. -5) veya 100m üzerindeki aşırı sapmalı doğruluk reddedilir', async ({
+    page,
+  }) => {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Başlat' }).click()
+
+    const now = Date.now()
+    // Negatif accuracy gönder
+    await page.evaluate((timestamp) => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0082,
+          longitude: 28.9784,
+          accuracy: -5,
+          speed: 15.0,
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp,
+      })
+    }, now)
+
+    // Reddedildiği için hız '--' kalmalı
+    await expect(page.locator('.speed-number')).toHaveText('--')
+
+    // 150 metre (100m üstü) accuracy gönder
+    await page.evaluate((timestamp) => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0083,
+          longitude: 28.9785,
+          accuracy: 150,
+          speed: 15.0,
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp: timestamp + 1000,
+      })
+    }, now)
+
+    // Hız yine '--' kalmalı
+    await expect(page.locator('.speed-number')).toHaveText('--')
+  })
+
+  test('3. Tekrar eden veya geriye giden zaman damgaları reddedilir, sahte hız güncellemesi oluşmaz', async ({
+    page,
+  }) => {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Başlat' }).click()
+
+    const baseTime = Date.now()
+
+    // 1. İlk geçerli okuma: 54 km/sa (15 m/s)
+    await page.evaluate((timestamp) => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0082,
+          longitude: 28.9784,
+          accuracy: 5,
+          speed: 15.0,
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp,
+      })
+    }, baseTime)
+
+    await expect(page.locator('.speed-number')).toHaveText('54')
+
+    // 2. Aynı (tekrarlanan) zaman damgasıyla 90 km/sa (25 m/s) gönder
+    await page.evaluate((timestamp) => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0085,
+          longitude: 28.9787,
+          accuracy: 5,
+          speed: 25.0,
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp, // baseTime ile aynı!
+      })
+    }, baseTime)
+
+    // Tekrar eden zaman damgası reddedilmeli, hız 54 kalmalı (90'a çıkmamalı)
+    await expect(page.locator('.speed-number')).toHaveText('54')
+
+    // 3. Geriye giden (daha eski) zaman damgasıyla veri gönder
+    await page.evaluate((timestamp) => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0088,
+          longitude: 28.9790,
+          accuracy: 5,
+          speed: 30.0,
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp: timestamp - 5000, // 5 saniye geçmiş!
+      })
+    }, baseTime)
+
+    // Geriye giden zaman damgası da reddedilmeli, hız 54 kalmalı
+    await expect(page.locator('.speed-number')).toHaveText('54')
+  })
+
+  test('4. Makul olmayan gelecek zamanlı veya eksik/NaN zaman damgaları koşulsuz kabul edilmez ve reddedilir', async ({
+    page,
+  }) => {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Başlat' }).click()
+
+    const now = Date.now()
+
+    // 1 dakika gelecekteki zaman damgası (unreasonable future drift)
+    await page.evaluate((timestamp) => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0082,
+          longitude: 28.9784,
+          accuracy: 5,
+          speed: 20.0,
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp: timestamp + 60000, // +60 saniye
+      })
+    }, now)
+
+    // Reddedilmeli, hız '--' kalmalı
+    await expect(page.locator('.speed-number')).toHaveText('--')
+
+    // NaN veya 0 zaman damgalı veri
+    await page.evaluate(() => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0082,
+          longitude: 28.9784,
+          accuracy: 5,
+          speed: 20.0,
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp: NaN as unknown as number,
+      })
+    })
+
+    // Reddedilmeli
+    await expect(page.locator('.speed-number')).toHaveText('--')
+  })
+
+  test('5. Normal sıralı okumalarda hız ve mesafe akıcı şekilde güncellenir', async ({
+    page,
+  }) => {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Başlat' }).click()
+
+    const now = Date.now()
+
+    // Adım 1: 36 km/sa
+    await page.evaluate((timestamp) => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0082,
+          longitude: 28.9784,
+          accuracy: 8,
+          speed: 10.0,
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp,
+      })
+    }, now)
+    await expect(page.locator('.speed-number')).toHaveText('36')
+
+    // Adım 2: 72 km/sa (1 saniye sonra)
+    await page.evaluate((timestamp) => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0084,
+          longitude: 28.9786,
+          accuracy: 6,
+          speed: 20.0,
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp: timestamp + 1000,
+      })
+    }, now)
+    await expect(page.locator('.speed-number')).toHaveText('72')
+  })
+})
+
+test.describe('SpeedGPS V3 — Aşama 2 / Görev 6: PWA Güncelleme Yönetimi ve Netlify Güvenliği', () => {
+  test('1. Normal yüklemede ve ölçüm sırasında gereksiz PWA güncelleme bildirimi gösterilmez', async ({
+    page,
+  }) => {
+    await page.goto('/')
+    // Başlangıçta güncelleme bildirimi olmamalı
+    await expect(page.locator('.alert-pwa-update')).toHaveCount(0)
+
+    // Ölçüm başlatıldığında da bildirim olmamalı
+    await page.getByRole('button', { name: 'Başlat' }).click()
+    await expect(page.locator('.alert-pwa-update')).toHaveCount(0)
+  })
+
+  test('2. /gizlilik rotası doğrudan açıldığında veya tıklandığında sorunsuz yüklenir ve ana ekrana döner', async ({
+    page,
+  }) => {
+    await page.goto('/gizlilik')
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('Gizlilik Politikası')
+
+    // Ana Ekrana Dön butonu
+    const backBtn = page.locator('.privacy-back-btn')
+    await expect(backBtn).toBeVisible()
+    await backBtn.click()
+
+    await expect(page.locator('.brand-title')).toContainText('SpeedGPS')
+  })
+
+  test('3. netlify.toml güvenlik başlıkları (HSTS, CSP, Permissions-Policy) eksiksiz yapılandırılmıştır', async () => {
+    const fs = await import('node:fs')
+    const tomlContent = fs.readFileSync('netlify.toml', 'utf-8')
+
+    // HSTS (Strict-Transport-Security)
+    expect(tomlContent).toContain('Strict-Transport-Security')
+    expect(tomlContent).toContain('max-age=31536000')
+
+    // CSP (Content-Security-Policy)
+    expect(tomlContent).toContain('Content-Security-Policy')
+    expect(tomlContent).toContain("default-src 'self'")
+    expect(tomlContent).toContain("worker-src 'self' blob:")
+    expect(tomlContent).toContain("script-src 'self'")
+
+    // Permissions-Policy (Geolocation ve Screen Wake Lock)
+    expect(tomlContent).toContain('Permissions-Policy')
+    expect(tomlContent).toContain('geolocation=(self)')
+    expect(tomlContent).toContain('screen-wake-lock=(self)')
+  })
+})
+
+test.describe('SpeedGPS V3 — Aşama 2 / Görev 7: E2E Test Güvenilirliği ve Kalite Kontrolü', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.clear()
+    })
+  })
+
+  test('1. Gerçekçi Geolocation mock: watchPosition ve clearWatch yaşam döngüsü ve callback izolasyonu', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      let nextWatchId = 1
+      const activeWatchers = new Map<number, { success: MockGeoListener; error?: PositionErrorCallback | null }>()
+      window.__clearWatchCallCount = 0
+      window.__lastClearedWatchId = null
+      window.__activeWatcherCount = 0
+
+      const mockGeolocation = {
+        watchPosition: (success: MockGeoListener, error?: PositionErrorCallback | null) => {
+          const id = nextWatchId++
+          activeWatchers.set(id, { success, error })
+          window.__activeWatcherCount = activeWatchers.size
+          return id
+        },
+        clearWatch: (id: number) => {
+          window.__clearWatchCallCount = (window.__clearWatchCallCount || 0) + 1
+          window.__lastClearedWatchId = id
+          activeWatchers.delete(id)
+          window.__activeWatcherCount = activeWatchers.size
+        },
+        getCurrentPosition: () => {},
+      }
+      Object.defineProperty(navigator, 'geolocation', {
+        value: mockGeolocation,
+        configurable: true,
+      })
+
+      window.__emitGps = (pos: MockPosition) => {
+        activeWatchers.forEach(({ success }) => {
+          success(pos)
+        })
+      }
+    })
+
+    await page.goto('/')
+
+    // Başlangıçta watcher sayısı 0
+    let watcherCount = await page.evaluate(() => window.__activeWatcherCount)
+    expect(watcherCount).toBe(0)
+
+    // Başlat butonuna bas
+    await page.getByRole('button', { name: 'Başlat' }).click()
+
+    // watchPosition çağrılmış olmalı, aktif watcher sayısı 1
+    watcherCount = await page.evaluate(() => window.__activeWatcherCount)
+    expect(watcherCount).toBe(1)
+
+    // Canlı GPS verisi gönder (54 km/sa = 15 m/s)
+    await page.evaluate(() => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0082,
+          longitude: 28.9784,
+          accuracy: 6,
+          speed: 15.0,
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp: Date.now(),
+      })
+    })
+
+    await expect(page.locator('.speed-number')).toHaveText('54')
+    await expect(page.locator('.status-pill')).toHaveText(/Aktif/)
+
+    // Ölçümü durdur
+    await page.getByRole('button', { name: 'Durdur' }).click()
+
+    // clearWatch çağrılmış olmalı, aktif watcher sayısı 0
+    const clearCount = await page.evaluate(() => window.__clearWatchCallCount)
+    const lastClearedId = await page.evaluate(() => window.__lastClearedWatchId)
+    watcherCount = await page.evaluate(() => window.__activeWatcherCount)
+
+    expect(clearCount).toBe(1)
+    expect(lastClearedId).toBeGreaterThan(0)
+    expect(watcherCount).toBe(0)
+
+    // clearWatch çağrıldıktan sonra artık yeni GPS verisi gönderilse bile callback işletilmemeli
+    await page.evaluate(() => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.0083,
+          longitude: 28.9785,
+          accuracy: 5,
+          speed: 25.0, // 90 km/sa
+          heading: 90,
+          altitude: 50,
+        },
+        timestamp: Date.now() + 1000,
+      })
+    })
+
+    // Hız 90'a çıkmamalı, '--' ve Durduruldu kalmalı
+    await expect(page.locator('.speed-number')).toHaveText('--')
+    await expect(page.locator('.status-pill')).toHaveText(/Durduruldu/)
+  })
+
+  test('2. Çoklu watcher sızıntısı tespiti: Hızlı başlat/durdur ve HUD geçişlerinde tekil watcher korunur', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      let nextWatchId = 100
+      const activeWatchers = new Map<number, MockGeoListener>()
+      window.__activeWatcherCount = 0
+
+      const mockGeolocation = {
+        watchPosition: (success: MockGeoListener) => {
+          const id = nextWatchId++
+          activeWatchers.set(id, success)
+          window.__activeWatcherCount = activeWatchers.size
+          return id
+        },
+        clearWatch: (id: number) => {
+          activeWatchers.delete(id)
+          window.__activeWatcherCount = activeWatchers.size
+        },
+        getCurrentPosition: () => {},
+      }
+      Object.defineProperty(navigator, 'geolocation', {
+        value: mockGeolocation,
+        configurable: true,
+      })
+      window.__emitGps = (pos: MockPosition) => {
+        activeWatchers.forEach((listener) => listener(pos))
+      }
+    })
+
+    await page.goto('/')
+
+    // 1. Başlat -> 1 watcher
+    await page.getByRole('button', { name: 'Başlat' }).click()
+    expect(await page.evaluate(() => window.__activeWatcherCount)).toBe(1)
+
+    // 2. HUD aç -> Halen 1 watcher (çift açılma yok)
+    await page.getByRole('button', { name: 'HUD' }).click()
+    await expect(page.locator('.hud-overlay')).toBeVisible()
+    expect(await page.evaluate(() => window.__activeWatcherCount)).toBe(1)
+
+    // 3. HUD kapat -> Halen 1 watcher
+    await page.getByRole('button', { name: 'HUD modundan çık' }).click()
+    await expect(page.locator('.hud-overlay')).not.toBeVisible()
+    expect(await page.evaluate(() => window.__activeWatcherCount)).toBe(1)
+
+    // 4. Durdur -> 0 watcher
+    await page.getByRole('button', { name: 'Durdur' }).click()
+    expect(await page.evaluate(() => window.__activeWatcherCount)).toBe(0)
+
+    // 5. HUD üzerinden doğrudan başlatma -> 1 watcher
+    await page.getByRole('button', { name: 'HUD' }).click()
+    await expect(page.locator('.hud-overlay')).toBeVisible()
+    expect(await page.evaluate(() => window.__activeWatcherCount)).toBe(1)
+
+    // 6. HUD kapatıp Durdur'a bas -> 0 watcher
+    await page.getByRole('button', { name: 'HUD modundan çık' }).click()
+    await page.getByRole('button', { name: 'Durdur' }).click()
+    expect(await page.evaluate(() => window.__activeWatcherCount)).toBe(0)
+  })
+
+  test('3. GPS hata kodlarının ayrı modellenmesi: PERMISSION_DENIED, POSITION_UNAVAILABLE ve TIMEOUT', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      let activeErrorCb: PositionErrorCallback | null = null
+
+      const mockGeolocation = {
+        watchPosition: (_success: MockGeoListener, error?: PositionErrorCallback | null) => {
+          activeErrorCb = error || null
+          return 707
+        },
+        clearWatch: () => {
+          activeErrorCb = null
+        },
+        getCurrentPosition: () => {},
+      }
+      Object.defineProperty(navigator, 'geolocation', {
+        value: mockGeolocation,
+        configurable: true,
+      })
+
+      window.__emitGpsError = (err: GeolocationPositionError) => {
+        if (activeErrorCb) {
+          activeErrorCb(err)
+        }
+      }
+    })
+
+    await page.goto('/')
+
+    // Senaryo A: PERMISSION_DENIED (Kod 1)
+    await page.getByRole('button', { name: 'Başlat' }).click()
+    await page.evaluate(() => {
+      window.__emitGpsError?.({
+        code: 1,
+        message: 'Permission denied',
+        PERMISSION_DENIED: 1,
+        POSITION_UNAVAILABLE: 2,
+        TIMEOUT: 3,
+      })
+    })
+    await expect(page.locator('.alert-error')).toContainText('Konum izni reddedildi')
+    await expect(page.locator('.status-pill')).toHaveText(/Hata/)
+
+    // Senaryo B: POSITION_UNAVAILABLE (Kod 2)
+    // Tekrar başlat
+    await page.getByRole('button', { name: 'Başlat' }).click()
+    await page.evaluate(() => {
+      window.__emitGpsError?.({
+        code: 2,
+        message: 'Position unavailable',
+        PERMISSION_DENIED: 1,
+        POSITION_UNAVAILABLE: 2,
+        TIMEOUT: 3,
+      })
+    })
+    await expect(page.locator('.alert-error')).toContainText('GPS konumuna erişilemiyor')
+    await expect(page.locator('.status-pill')).toHaveText(/Bekleniyor/)
+
+    // Senaryo C: TIMEOUT (Kod 3)
+    // Geçici kesintide watcher korunduğundan Başlat'a basmaya gerek olmadan aynı watcher üzerinden TIMEOUT alınır
+    await page.evaluate(() => {
+      window.__emitGpsError?.({
+        code: 3,
+        message: 'Timeout occurred',
+        PERMISSION_DENIED: 1,
+        POSITION_UNAVAILABLE: 2,
+        TIMEOUT: 3,
+      })
+    })
+    await expect(page.locator('.alert-error')).toContainText('GPS sinyali zaman aşımına uğradı')
+    await expect(page.locator('.status-pill')).toHaveText(/Bekleniyor/)
+
+    // Kesinti sırasında Durdur'a basılınca temizlik yapılır
+    await page.getByRole('button', { name: 'Durdur' }).click()
+    await expect(page.locator('.status-pill')).toHaveText(/Durduruldu/)
+  })
+
+  test('4. Fiziksel hareket doğruluğu: Mantıksal tutarlı GPS adımları ile mesafe ve hız entegrasyonu', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      window.__geoListeners = []
+      const mockGeolocation = {
+        watchPosition: (success: MockGeoListener) => {
+          window.__geoListeners.push(success)
+          return 101
+        },
+        clearWatch: () => {
+          window.__geoListeners = []
+        },
+        getCurrentPosition: () => {},
+      }
+      Object.defineProperty(navigator, 'geolocation', {
+        value: mockGeolocation,
+        configurable: true,
+      })
+      window.__emitGps = (pos: MockPosition) => {
+        window.__geoListeners.forEach((l) => l(pos))
+      }
+    })
+
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Başlat' }).click()
+
+    const t0 = Date.now()
+
+    // Adım 1 (t0): İlk referans konumu (10 m/s = 36 km/sa)
+    await page.evaluate((timestamp) => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.00820,
+          longitude: 28.97840,
+          accuracy: 5,
+          speed: 10.0,
+          heading: 0,
+          altitude: 40,
+        },
+        timestamp,
+      })
+    }, t0)
+
+    await expect(page.locator('.speed-number')).toHaveText('36')
+
+    // Adım 2 (t0 + 2000ms): 20 metre kuzeyde tutarlı konum, hız 10 m/s
+    // 20 metre kuzey = ~0.00018 derece enlem
+    await page.evaluate((timestamp) => {
+      window.__emitGps({
+        coords: {
+          latitude: 41.00838,
+          longitude: 28.97840,
+          accuracy: 5,
+          speed: 10.0,
+          heading: 0,
+          altitude: 40,
+        },
+        timestamp: timestamp + 2000,
+      })
+    }, t0)
+
+    // Hız 36 km/sa korunmalı
+    await expect(page.locator('.speed-number')).toHaveText('36')
+    // Mesafe ~20 m artmalı
+    const distanceStat = page.locator('.stat-tile').nth(2).locator('.stat-value')
+    await expect(distanceStat).toContainText('20 m')
+  })
+
+  test('5. Fullscreen ve Screen Orientation mock: fullscreenchange olayları ve orientation lock/unlock takibi', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      window.__fullscreenCallCount = 0
+      window.__exitFullscreenCallCount = 0
+      window.__orientationLockCallCount = 0
+      window.__orientationUnlockCallCount = 0
+      window.__geoListeners = []
+      const mockGeolocation = {
+        watchPosition: (success: MockGeoListener) => {
+          window.__geoListeners.push(success)
+          return 101
+        },
+        clearWatch: () => {},
+        getCurrentPosition: () => {},
+      }
+      Object.defineProperty(navigator, 'geolocation', {
+        value: mockGeolocation,
+        configurable: true,
+      })
+
+      let activeFs: Element | null = null
+
+      Element.prototype.requestFullscreen = function () {
+        window.__fullscreenCallCount++
+        activeFs = document.documentElement
+        Object.defineProperty(document, 'fullscreenElement', {
+          get: () => activeFs,
+          configurable: true,
+        })
+        document.dispatchEvent(new Event('fullscreenchange'))
+        return Promise.resolve()
+      }
+
+      Document.prototype.exitFullscreen = function () {
+        window.__exitFullscreenCallCount++
+        activeFs = null
+        Object.defineProperty(document, 'fullscreenElement', {
+          get: () => null,
+          configurable: true,
+        })
+        document.dispatchEvent(new Event('fullscreenchange'))
+        return Promise.resolve()
+      }
+
+      const mockOrientation = {
+        type: 'portrait-primary',
+        angle: 0,
+        lock: (orient: string) => {
+          window.__orientationLockCallCount = (window.__orientationLockCallCount || 0) + 1
+          window.__orientationLocked = orient
+          return Promise.resolve()
+        },
+        unlock: () => {
+          window.__orientationUnlockCallCount = (window.__orientationUnlockCallCount || 0) + 1
+          window.__orientationLocked = null
+        },
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => true,
+      }
+      Object.defineProperty(screen, 'orientation', {
+        value: mockOrientation,
+        configurable: true,
+      })
+    })
+
+    await page.goto('/')
+
+    // HUD'ı aç
+    await page.getByRole('button', { name: 'HUD' }).click()
+    const hudOverlay = page.locator('.hud-overlay')
+    await expect(hudOverlay).toBeVisible()
+
+    // Fullscreen ve orientation mock çağrıları kontrolü
+    const fsCalls = await page.evaluate(() => window.__fullscreenCallCount)
+    const lockCalls = await page.evaluate(() => window.__orientationLockCallCount)
+    const lockedOrientation = await page.evaluate(() => window.__orientationLocked)
+
+    expect(fsCalls).toBe(1)
+    expect(lockCalls).toBe(1)
+    expect(lockedOrientation).toBe('landscape')
+
+    // Tarayıcıdan native fullscreen çıkışı simülasyonu (kullanıcı ESC'ye basmış gibi)
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'fullscreenElement', {
+        get: () => null,
+        configurable: true,
+      })
+      document.dispatchEvent(new Event('fullscreenchange'))
+    })
+
+    // Native fullscreen çıkışında HUD temiz bir şekilde kapanmalı ve durum senkronize kalmalı
+    await expect(hudOverlay).not.toBeVisible()
+
+    // Orientation unlock çağrılmış olmalı
+    const unlockCalls = await page.evaluate(() => window.__orientationUnlockCallCount)
+    expect(unlockCalls).toBeGreaterThanOrEqual(1)
+
+    // Arka plandaki GPS oturumu ve Durdur butonu korunmuş olmalı
+    await expect(page.getByRole('button', { name: 'Durdur' })).toBeVisible()
+  })
+})
 

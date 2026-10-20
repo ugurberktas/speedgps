@@ -142,4 +142,4 @@ export class GpsDebugLogger {
 }
 
 // Uygulama geneli tekil logger nesnesi (Singleton)
-export const gpsDebugLogger = new GpsDebugLogger()
+export const gpsDebugLogger = /* @__PURE__ */ new GpsDebugLogger()

@@ -46,14 +46,16 @@ export function shouldTriggerOutageRecovery(input: OutageCheckInput): boolean {
 
 /**
  * Ölçüm süresinin (elapsedSeconds) artırılıp artırılmayacağını belirler.
- * Kesinti süreleri veya arka planda duraklatılan süreler geçerli ölçüm süresine dahil edilmez.
+ * Kesinti süreleri, arka planda duraklatılan süreler veya geçerli bir hızın
+ * henüz ölçülemediği (hız null / --) durumlar geçerli ölçüm süresine dahil edilmez.
  */
 export function canIncrementMeasurementDuration(
   gpsStatus: string,
   isPaused: boolean,
-  isStale: boolean
+  isStale: boolean,
+  hasValidMeasurement: boolean = true
 ): boolean {
-  return gpsStatus === 'aktif' && !isPaused && !isStale
+  return gpsStatus === 'aktif' && !isPaused && !isStale && hasValidMeasurement
 }
 
 /**

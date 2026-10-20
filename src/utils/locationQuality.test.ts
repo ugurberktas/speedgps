@@ -61,10 +61,18 @@ describe('GPS Konum Kalitesi Modülü (Sprint 6 / Adım 2)', () => {
       expect(q95?.accuracyMeters).toBe(95)
     })
 
-    it('4. Geçersiz, sıfır, negatif veya eksik doğruluk verilerinde null dönmelidir', () => {
+    it('4. accuracy=0 geçerli bir doğruluk değeridir ve "İyi" (±0m) dönmelidir', () => {
+      const q0 = getLocationQuality(0)
+      expect(q0).toEqual({
+        level: 'iyi',
+        label: 'İyi',
+        accuracyMeters: 0,
+      })
+    })
+
+    it('5. Geçersiz, negatif veya eksik doğruluk verilerinde null dönmelidir', () => {
       expect(getLocationQuality(null)).toBeNull()
       expect(getLocationQuality(undefined)).toBeNull()
-      expect(getLocationQuality(0)).toBeNull()
       expect(getLocationQuality(-5)).toBeNull()
       expect(getLocationQuality(Number.NaN)).toBeNull()
       expect(getLocationQuality(Number.POSITIVE_INFINITY)).toBeNull()
@@ -100,9 +108,15 @@ describe('GPS Konum Kalitesi Modülü (Sprint 6 / Adım 2)', () => {
       expect(result).toBeNull()
     })
 
-    it('10. GPS aktif fakat doğruluk geçersizse null dönmelidir', () => {
+    it('10. GPS aktif ve accuracy=0 olduğunda İyi kalite rozeti dönmeli; geçersiz değerlerde null dönmelidir', () => {
+      expect(getActiveLocationQuality(0, 'aktif', false)).toEqual({
+        level: 'iyi',
+        label: 'İyi',
+        accuracyMeters: 0,
+      })
       expect(getActiveLocationQuality(null, 'aktif', false)).toBeNull()
-      expect(getActiveLocationQuality(0, 'aktif', false)).toBeNull()
+      expect(getActiveLocationQuality(-5, 'aktif', false)).toBeNull()
+      expect(getActiveLocationQuality(NaN, 'aktif', false)).toBeNull()
     })
   })
 })

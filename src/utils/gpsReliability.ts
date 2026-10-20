@@ -38,49 +38,55 @@ export const GPS_RELIABILITY_CONFIG = {
   STATIONARY_STALE_TIMEOUT_MS: 30000,
 
   /**
-   * Sprint 4 / Adım 2: Hız Filtreleme Eşikleri
-   * NOT: Bu eşikler fiziksel kurallar ve literatüre dayalı başlangıç varsayımlarıdır;
-   * gerçek saha testleriyle taşıt/kullanıcı profiline göre kalibre edilebilir şekilde tasarlanmıştır.
+   * Sprint 4 / Adım 2 & V3 Aşama 2: Hız ve İvme Filtreleme Eşikleri
+   * NOT: Bu eşikler evrensel fiziksel imkânsızlık kanıtı değildir. SpeedGPS kara araçlarının yanı sıra
+   * yaya, bisiklet, yüksek hızlı tren (YHT/TGV) veya havacılık gibi farklı senaryolarda da çalışabilir.
+   * Buradaki eşikler, tüketici akıllı telefonlarındaki GNSS alıcılarının tekil uydu yansıması (multipath)
+   * ve koordinat sıçraması kaynaklı gürültülerini filtrelemek amacıyla belirlenmiş mühendislik eşikleridir.
    */
 
   /**
-   * Maksimum Gerçekçi Kara Hızı (km/sa):
-   * Kara araçları için fiziksel üst sınır kabulü. Bu sınırın üzerindeki tekil sıçramalar
-   * GPS uydu yansıması (multipath) veya donanım hatası kabul edilerek elenir.
-   * Başlangıç varsayımı: 250 km/sa.
+   * Maksimum Gerçekçi Kara / Şehir Hızı Filtre Eşiği (km/sa):
+   * Tüketici GPS alıcılarında baz istasyonu atlaması veya uydu yansıması sonucu oluşan
+   * yüzlerce km/sa'lik sahte sıçramaları filtrelemek için kullanılan varsayılan üst sınır.
+   * Yüksek hızlı tren veya havacılık gibi özel yüksek hızlı modlar için ileride profil bazlı
+   * konfigürasyon planlanmıştır.
+   * Mevcut varsayım: 250 km/sa.
    */
   MAX_REALISTIC_SPEED_KMH: 250,
 
   /**
-   * Doğrudan GPS İçin Maksimum İvmelenme Eşiği (m/s²):
-   * Standart kara taşıtlarında 1 saniyede ~54 km/sa (15 m/s) üzerinde hız artışı/azalışı
-   * fiziksel olarak imkansızdır. Bu eşiğin üzerindeki ani değişimler sıçrama kabul edilir.
-   * Başlangıç varsayımı: 15 m/s² (~54 km/sa/sn).
+   * Doğrudan GPS (coords.speed) İçin İvmelenme Filtre Eşiği (m/s²):
+   * Tüketici akıllı telefonlarında donanım hızında tek bir saniyede ~54 km/sa (15 m/s) üzerindeki
+   * ani sıçramalar çok büyük olasılıkla Doppler gürültüsü veya uydu kilidi kaybı kaynaklıdır.
+   * Bu eşik ani sensör gürültüsünü filtrelemek için bir filtreleme filtresidir; mutlak fizik kanunu değildir.
+   * Mevcut varsayım: 15 m/s² (~54 km/sa/sn).
    */
   MAX_ACCELERATION_MS2: 15,
 
   /**
-   * Haversine (Koordinat Farkı) İçin Maksimum İvmelenme Eşiği (m/s²):
-   * Koordinat farkından türetilen hız konum kaymalarına daha duyarlı olduğundan
-   * daha sıkı bir ivme sınırı uygulanır.
-   * Başlangıç varsayımı: 12 m/s² (~43 km/sa/sn).
+   * Haversine (Koordinat Türevi) İçin İvmelenme Filtre Eşiği (m/s²):
+   * Koordinat farkından türetilen hız, konum dalgalanmalarına donanım hızından daha duyarlı
+   * olduğundan koordinat sıçramalarına karşı daha sıkı bir sınır uygulanır.
+   * Mevcut varsayım: 12 m/s² (~43 km/sa/sn).
    */
   MAX_HAVERSINE_ACCELERATION_MS2: 12,
 
   /**
    * Doğrudan GPS (coords.speed) Durgunluk Titreme Eşiği (km/sa):
-   * Platform/donanım hızında 1.0 km/sa altındaki değerler donanım gürültüsü kabul edilerek sıfırlanır.
-   * 1.0 - 2.5 km/sa arasındaki yavaş yürüyüş hızları (ör. 1.2 - 2.4 km/sa) gerçek hareket olarak korunur.
-   * Başlangıç varsayımı: 1.0 km/sa.
+   * Platform GNSS yonga setinin Doppler hızında 1.0 km/sa altındaki değerler durağan durumdaki
+   * sensör ölü bölgesi (deadband) gürültüsü kabul edilerek 0 km/sa'e çekilir.
+   * 1.0 - 2.5 km/sa arasındaki yavaş yürüyüş hızları gerçek hareket olarak korunur.
+   * Mevcut varsayım: 1.0 km/sa.
    */
   STATIONARY_GPS_SPEED_THRESHOLD_KMH: 1.0,
 
   /**
    * Koordinat Kayması (Haversine) Durgunluk Titreme Hız Eşiği (km/sa):
-   * Cihaz masa üstünde veya ışıkta dururken GPS konumunun 1-3 metre dalgalanması yapay
+   * Cihaz masa üstünde veya ışıkta dururken GPS koordinatlarının 1-3 metre dalgalanması yapay
    * 1-4 km/sa koordinat hızları oluşturabilir. Doğrulanmış yer değiştirme (>= 2m) bulunmadığında
    * bu eşiğin altındaki koordinat hızları 0 km/sa kabul edilir.
-   * Başlangıç varsayımı: 2.5 km/sa.
+   * Mevcut varsayım: 2.5 km/sa.
    */
   STATIONARY_DRIFT_SPEED_THRESHOLD_KMH: 2.5,
 
@@ -130,12 +136,20 @@ export const GPS_RELIABILITY_CONFIG = {
    * Başlangıç varsayımı: 3 örnek (minimum gecikme ile tekil sıçramaları anında süzer).
    */
   MEDIAN_FILTER_WINDOW_SIZE: 3,
+  /**
+   * Gelecek Zamanlı GPS Örnekleri İçin Maksimum Makul Tolerans (Milisaniye):
+   * GPS donanımı veya cihaz saati arasındaki küçük kaymalar (clock drift) için tolerans.
+   * Cihazın geçerli saatinden 15 saniyeden daha ilerideki zaman damgaları
+   * fiziksel olarak imkansız/hatalı kabul edilerek reddedilir.
+   */
+  MAX_FUTURE_TIMESTAMP_DRIFT_MS: 15000,
 } as const
 
 /**
  * coords.accuracy değerinin geçerli ve kabul edilebilir olup olmadığını denetler.
+ * Geolocation API standardına göre accuracy negatif olmayan bir sayıdır (>= 0).
  * Değer sağlanmamışsa (null veya undefined) geriye dönük uyumluluk gereği geçerli kabul edilir.
- * Sağlanmışsa pozitif, sonlu bir sayı olmalı ve 100 metre eşiğini aşmamalıdır.
+ * Sağlanmışsa negatif olmayan (>= 0), sonlu bir sayı olmalı ve 100 metre eşiğini aşmamalıdır.
  */
 export function isValidAccuracy(accuracy: number | null | undefined): boolean {
   if (accuracy === undefined || accuracy === null) {
@@ -146,7 +160,7 @@ export function isValidAccuracy(accuracy: number | null | undefined): boolean {
     return false
   }
 
-  if (accuracy <= 0) {
+  if (accuracy < 0) {
     return false
   }
 
@@ -165,8 +179,16 @@ export function calculateCombinedAccuracy(
   acc1?: number | null,
   acc2?: number | null
 ): number | null {
-  const valid1 = typeof acc1 === 'number' && Number.isFinite(acc1) && acc1 > 0
-  const valid2 = typeof acc2 === 'number' && Number.isFinite(acc2) && acc2 > 0
+  const isProvided1 = acc1 !== null && acc1 !== undefined
+  const isProvided2 = acc2 !== null && acc2 !== undefined
+
+  const valid1 = isProvided1 && typeof acc1 === 'number' && Number.isFinite(acc1) && acc1 >= 0
+  const valid2 = isProvided2 && typeof acc2 === 'number' && Number.isFinite(acc2) && acc2 >= 0
+
+  // Sağlanan değerlerden herhangi biri geçersizse (örn. negatif veya NaN) null dön
+  if ((isProvided1 && !valid1) || (isProvided2 && !valid2)) {
+    return null
+  }
 
   if (valid1 && valid2) {
     return ((acc1 as number) + (acc2 as number)) / 2
@@ -184,6 +206,7 @@ export function calculateCombinedAccuracy(
  * Konum doğruluğuna (accuracy) duyarlı dinamik mesafe titreme eşiğini hesaplar.
  * Tek veya iki nokta doğruluğu verildiğinde hata payı altında kalan hareketleri filtreler.
  * Taban eşik: STATIONARY_DISTANCE_THRESHOLD_METERS (2.0 metre).
+ * NOT: Doğruluk 0 olsa dahi fiziksel sensör gürültüsüne karşı taban eşik (2.0m) korunur.
  */
 export function getEffectiveDistanceThreshold(
   accuracy?: number | null,
@@ -207,14 +230,41 @@ export interface GpsReliabilityCheckInput {
 }
 
 /**
+ * GPS zaman damgasının geçerli, pozitif ve makul zaman aralığında olup olmadığını denetler.
+ * - Eksik, sayısal olmayan, NaN ve sonsuz değerleri reddeder.
+ * - 0 ve negatif değerleri reddeder.
+ * - Makul olmayan gelecek zamanlı değerleri reddeder (maxWallTime + tolerans).
+ */
+export function isValidGpsTimestamp(
+  timestamp: unknown,
+  maxWallTime: number = Date.now()
+): timestamp is number {
+  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
+    return false
+  }
+
+  if (timestamp <= 0) {
+    return false
+  }
+
+  // Makul olmayan gelecek zaman kontrolü
+  if (timestamp > maxWallTime + GPS_RELIABILITY_CONFIG.MAX_FUTURE_TIMESTAMP_DRIFT_MS) {
+    return false
+  }
+
+  return true
+}
+
+/**
  * GPS okumasının temel sayısal ve mantıksal geçerliliğini denetler:
  * 1. coords ve timestamp alanlarının varlığı
  * 2. Enlem (-90..90) ve boylam (-180..180) sınırları
- * 3. Zaman damgasının pozitif ve sonlu bir sayı olması
- * 4. Konum doğruluğunun (accuracy) sınırları aşmaması
+ * 3. Zaman damgasının pozitif, sonlu ve makul bir sayı olması
+ * 4. Konum doğruluğunun (accuracy >= 0) sınırları aşmaması
  */
 export function isReliableGpsReading(
-  reading: GpsReliabilityCheckInput | null | undefined
+  reading: GpsReliabilityCheckInput | null | undefined,
+  maxWallTime?: number
 ): boolean {
   if (!reading || !reading.coords) {
     return false
@@ -223,7 +273,7 @@ export function isReliableGpsReading(
   const { latitude, longitude, accuracy } = reading.coords
   const timestamp = reading.timestamp
 
-  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp) || timestamp <= 0) {
+  if (!isValidGpsTimestamp(timestamp, maxWallTime)) {
     return false
   }
 

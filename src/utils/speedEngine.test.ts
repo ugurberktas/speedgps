@@ -422,7 +422,7 @@ describe('GpsSpeedTracker Sınıfı ve Oturum Yönetimi', () => {
     expect(tracker.getCurrentSpeedKmh()).toBe(0)
   })
 
-  it('Yeni Ölçüm (kesintisiz takip): Aktif oturumda Yeni Ölçüm yapıldığında hız motoru sıfırlanmaz, 0 km/sa kesintisiz devam eder', () => {
+  it('Kesintisiz takip: Aktif oturumda istatistikler sıfırlansa veya hız kaydedilse bile hız motoru bozulmaz, 0 km/sa kesintisiz devam eder', () => {
     const tracker = new GpsSpeedTracker()
 
     // Dururken ilk iki okuma
@@ -436,7 +436,7 @@ describe('GpsSpeedTracker Sınıfı ve Oturum Yönetimi', () => {
     })
     expect(res2.speedKmh).toBe(0)
 
-    // Yeni Ölçüm butonuna basıldı: Oturum istatistikleri sıfırlanır, fakat canlı tracker sıfırlanmaz
+    // Hız kaydedildi veya oturum sıfırlandı: Canlı tracker kesintisiz çalışmaya devam eder
     // Bir sonraki okumada önceki nokta kaybolmadığı için hız null'a ('--') düşmez, 0 km/sa devam eder
     const resAfterRecord = tracker.processReading({
       coords: { latitude: 41.0082, longitude: 28.9784, speed: null, accuracy: 15 },
@@ -444,6 +444,118 @@ describe('GpsSpeedTracker Sınıfı ve Oturum Yönetimi', () => {
     })
     expect(resAfterRecord.speedKmh).toBe(0)
     expect(tracker.getCurrentSpeedKmh()).toBe(0)
+  })
+
+  describe('V3 Aşama 3 / Görev 3: Haversine Çapa Yönetimi ve Dur-Kalk Testleri', () => {
+    const reading = (seconds: number, meters: number, speedKmh: number | null, accuracy = 5) => ({
+      coords: {
+        latitude: meters / 111194.92664455874,
+        longitude: 0,
+        accuracy,
+        speed: speedKmh === null ? null : speedKmh / 3.6,
+      },
+      timestamp: 100000 + seconds * 1000,
+    })
+
+    it('1. 1.000 metrelik konum sıçraması ve sonraki 15 saniye: Hız seyreltilerek sahte hıza dönüştürülmez, 0 kalır', () => {
+      const tracker = new GpsSpeedTracker()
+      tracker.processReading(reading(0, 0, null))
+      tracker.processReading(reading(1, 0, null))
+
+      // t = 2: 1000m sıçrama
+      const jumpRes = tracker.processReading(reading(2, 1000, null))
+      expect(jumpRes.isAccepted).toBe(false)
+      expect(jumpRes.isSpikeRejected).toBe(true)
+
+      // t = 3 .. 15: Yeni konumda sabit kalınıyor
+      for (let t = 3; t <= 15; t++) {
+        const res = tracker.processReading(reading(t, 1000, null))
+        expect(res.speedKmh).toBe(0)
+        expect(res.isAccepted).toBe(true)
+      }
+    })
+
+    it('2. Uzun duruş (60 sn) sonrası hareket: Eski bekleme süresi yeni hareketi seyreltmez (~18 km/sa üretilir)', () => {
+      const tracker = new GpsSpeedTracker()
+      for (let t = 0; t <= 60; t++) {
+        tracker.processReading(reading(t, 0, null))
+      }
+      // t = 61: 1 saniyede 5 metre hareket (5 m/s = 18 km/sa)
+      const moveRes = tracker.processReading(reading(61, 5, null))
+      expect(moveRes.speedKmh).toBeCloseTo(18, 0)
+      expect(moveRes.isAccepted).toBe(true)
+      expect(moveRes.source).toBe('haversine')
+    })
+
+    it('3. Normal düzenli yürüyüş (1.4 m/s ~ 5 km/sa) gecikmesiz ve doğru hesaplanır', () => {
+      const tracker = new GpsSpeedTracker()
+      tracker.processReading(reading(0, 0, null))
+
+      let lastRes
+      for (let t = 1; t <= 10; t++) {
+        lastRes = tracker.processReading(reading(t, t * 1.4, null))
+      }
+      expect(lastRes?.speedKmh).toBeCloseTo(5.0, 0)
+      expect(lastRes?.source).toBe('haversine')
+    })
+
+    it('4. Çok yavaş yürüyüş (0.5 m/s) çapa eşiğini biriktirerek ~1.8 km/sa üretir', () => {
+      const tracker = new GpsSpeedTracker()
+      tracker.processReading(reading(0, 0, null, 2))
+
+      let lastRes
+      for (let t = 1; t <= 8; t++) {
+        lastRes = tracker.processReading(reading(t, t * 0.5, null, 2))
+      }
+      expect(lastRes?.speedKmh).toBeCloseTo(1.8, 1)
+    })
+
+    it('5. Zayıf doğruluklu (> 25m) örnekler Haversine hızı üretmez (null döner)', () => {
+      const tracker = new GpsSpeedTracker()
+      tracker.processReading(reading(0, 0, null, 10))
+
+      const weakRes = tracker.processReading(reading(1, 10, null, 30))
+      expect(weakRes.speedKmh).toBeNull()
+      expect(weakRes.source).toBe('none')
+    })
+
+    it('6. GPS kaynak değişimi: Donanım hızı varken önceliklidir, kesildiğinde Haversine devralır', () => {
+      const tracker = new GpsSpeedTracker()
+
+      // 1. Donanım hızı mevcut (54 km/sa = 15 m/s)
+      const hwRes = tracker.processReading(reading(0, 0, 54))
+      expect(hwRes.speedKmh).toBe(54)
+      expect(hwRes.source).toBe('gps')
+
+      // 2. İkinci donanım okuması
+      const hwRes2 = tracker.processReading(reading(1, 15, 54))
+      expect(hwRes2.speedKmh).toBe(54)
+      expect(hwRes2.source).toBe('gps')
+
+      // 3. coords.speed null oldu -> Haversine kesintisiz devralır (1 saniyede 15m yer değiştirme = 54 km/sa)
+      const havRes = tracker.processReading(reading(2, 30, null))
+      expect(havRes.speedKmh).toBeCloseTo(54, 0)
+      expect(havRes.source).toBe('haversine')
+    })
+
+    it('7. Durma ve 0 km/sa geçişi: Yürüyüş durduğunda 3 saniye sonra hız 0 km/sa olur', () => {
+      const tracker = new GpsSpeedTracker()
+      tracker.processReading(reading(0, 0, null))
+
+      // 5 saniye yürüyüş (1.5 m/s)
+      for (let t = 1; t <= 5; t++) {
+        tracker.processReading(reading(t, t * 1.5, null))
+      }
+      expect(tracker.getCurrentSpeedKmh()).toBeGreaterThan(0)
+
+      // Durma: Konum sabit kalıyor (7.5m)
+      tracker.processReading(reading(6, 7.5, null)) // 1 sn durma
+      tracker.processReading(reading(7, 7.5, null)) // 2 sn durma
+      const stopRes = tracker.processReading(reading(8, 7.5, null)) // 3 sn durma -> hız 0
+
+      expect(stopRes.speedKmh).toBe(0)
+      expect(tracker.getCurrentSpeedKmh()).toBe(0)
+    })
   })
 })
 

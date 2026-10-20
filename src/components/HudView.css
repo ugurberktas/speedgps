@@ -31,10 +31,31 @@
   position: absolute;
   top: max(16px, env(safe-area-inset-top, 16px));
   right: max(16px, env(safe-area-inset-right, 16px));
+  left: max(16px, env(safe-area-inset-left, 16px));
   z-index: 100001;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
   pointer-events: auto;
+}
+
+.hud-top-error-badge {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  margin-right: auto;
+  max-width: 65%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Çıkış Butonu — ASLA aynalanmaz, kullanıcı tarafından doğrudan okunabilir */
@@ -56,7 +77,7 @@
   -webkit-backdrop-filter: blur(12px);
   transform: none !important;
   transition: background-color 0.15s ease, opacity 0.15s ease, border-color 0.15s ease;
-  min-height: 38px;
+  min-height: 44px;
   min-width: 44px;
 }
 
@@ -133,6 +154,28 @@
   text-align: center;
 }
 
+/* Durum Bildirimi (GPS Sinyali Bekleniyor / İzin Hatası) */
+.hud-status-text {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: clamp(12px, 2.5vw, 18px);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-top: 14px;
+  text-align: center;
+  padding: 6px 16px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  max-width: 90%;
+  box-sizing: border-box;
+}
+
+.hud-status-error {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
 /* ==========================================================================
    Dikey (Portrait) Ekranlar için CSS Tabanlı 90 Derece Dönüş
    (Screen Orientation Lock desteklemeyen iOS Safari vb. için)
@@ -168,5 +211,13 @@
 
   .hud-speed-unit {
     font-size: clamp(15px, 3.8cqw, 28px);
+  }
+}
+
+/* Erişilebilirlik: Azaltılmış Hareket Tercihi */
+@media (prefers-reduced-motion: reduce) {
+  .hud-exit-btn,
+  .hud-mirrored-display {
+    transition: none !important;
   }
 }

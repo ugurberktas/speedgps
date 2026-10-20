@@ -43,6 +43,10 @@ export class SpeedFilter {
   private medianWindow: number[] = []
   private emaSpeedKmh: number | null = null
 
+  // Kilitlenmeyi önleme ve yeniden edinim (Re-acquisition) durumu:
+  private consecutiveRejectedSpeedKmh: number | null = null
+  private consecutiveRejectedCount: number = 0
+
   public getLastAcceptedSpeed(): number | null {
     return this.lastAcceptedSpeedKmh
   }
@@ -56,12 +60,14 @@ export class SpeedFilter {
   }
 
   /**
-   * Filtre durumunu temizler (Başlat, Durdur, Yeni Ölçüm işlemlerinde çağrılır).
+   * Filtre durumunu temizler (Başlat ve Durdur işlemlerinde çağrılır).
    */
   public reset(): void {
     this.lastAcceptedSpeedKmh = null
     this.medianWindow = []
     this.emaSpeedKmh = null
+    this.consecutiveRejectedSpeedKmh = null
+    this.consecutiveRejectedCount = 0
   }
 
   /**
@@ -82,8 +88,11 @@ export class SpeedFilter {
 
     const { source, timeDeltaSeconds, distanceMeters, accuracyMeters } = options
 
-    // 2. Maksimum Gerçekçi Kara Hızı Denetimi (> 250 km/sa)
+    // 2. Maksimum Hız Sıçraması Filtre Eşiği (> 250 km/sa)
+    // Tüketici GPS alıcılarında baz istasyonu veya uydu atlaması kaynaklı sahte sıçramaları eler.
     if (rawSpeedKmh > GPS_RELIABILITY_CONFIG.MAX_REALISTIC_SPEED_KMH) {
+      this.consecutiveRejectedSpeedKmh = null
+      this.consecutiveRejectedCount = 0
       return {
         filteredSpeedKmh: this.lastAcceptedSpeedKmh,
         isSpikeRejected: true,
@@ -118,6 +127,8 @@ export class SpeedFilter {
           rawSpeedKmh < GPS_RELIABILITY_CONFIG.STATIONARY_DRIFT_SPEED_THRESHOLD_KMH
 
     if (rawSpeedKmh === 0 || isStationaryDistance || isStationarySpeed) {
+      this.consecutiveRejectedSpeedKmh = null
+      this.consecutiveRejectedCount = 0
       this.lastAcceptedSpeedKmh = 0
       this.emaSpeedKmh = 0
       this.medianWindow.push(0)
@@ -133,8 +144,8 @@ export class SpeedFilter {
     }
 
     // 4. İvmelenme ve Anormal Hız Sıçraması (Spike) Denetimi
-    // NOT: Önceki kabul edilen hız 0 km/sa olsa dahi (dururken ani sıçrama), fiziksel sınırların
-    // üzerindeki hız artışları (ör. 1 saniyede 0'dan 86 km/sa'e sıçrama) reddedilir!
+    // NOT: Dururken veya seyir halindeyken tekil örnekte ivme eşiğini aşan ani sıçramalar
+    // (ör. 1 saniyede 0'dan 86 km/sa'e sıçrama) sensör gürültüsü kabul edilerek elenir.
     if (this.lastAcceptedSpeedKmh !== null) {
       const dt =
         timeDeltaSeconds && timeDeltaSeconds > 0 && Number.isFinite(timeDeltaSeconds)
@@ -152,12 +163,40 @@ export class SpeedFilter {
 
       const speedDiff = Math.abs(rawSpeedKmh - this.lastAcceptedSpeedKmh)
       if (speedDiff > allowedDeltaKmh) {
-        // Fiziksel sınırları aşan sıçrama -> reddet, önceki kabul edilen hızı koru
-        return {
-          filteredSpeedKmh: this.lastAcceptedSpeedKmh,
-          isSpikeRejected: true,
-          isStationaryClamped: false,
+        // Fiziksel sınırları aşan hız değişimi:
+        // Tekil bir sıçrama mı yoksa ardışık ve birbiriyle tutarlı yeni bir hareket yörüngesi mi kontrol et
+        const stepAllowedDeltaKmh = Math.max(maxAcc * 1.0 * 3.6, 35)
+        const isConsistentWithPreviousRejected =
+          this.consecutiveRejectedSpeedKmh !== null &&
+          Math.abs(rawSpeedKmh - this.consecutiveRejectedSpeedKmh) <= stepAllowedDeltaKmh
+
+        if (isConsistentWithPreviousRejected) {
+          this.consecutiveRejectedCount++
+          this.consecutiveRejectedSpeedKmh = rawSpeedKmh
+        } else {
+          this.consecutiveRejectedSpeedKmh = rawSpeedKmh
+          this.consecutiveRejectedCount = 1
         }
+
+        // 3 veya daha fazla ardışık tutarlı örnek geldiğinde (yeni güvenli yörünge):
+        // Eski yanlış başlangıç hızının kilidini aç ve hız referansını yeniden edin (re-acquisition).
+        if (this.consecutiveRejectedCount >= 3) {
+          this.consecutiveRejectedCount = 0
+          this.consecutiveRejectedSpeedKmh = null
+          this.medianWindow = []
+          this.emaSpeedKmh = null
+          // Kilitlenme kırıldı: Yeni yörünge kabul edilir
+        } else {
+          // Hâlâ izole sıçrama aşamasında -> reddet, önceki kabul edilen hızı koru
+          return {
+            filteredSpeedKmh: this.lastAcceptedSpeedKmh,
+            isSpikeRejected: true,
+            isStationaryClamped: false,
+          }
+        }
+      } else {
+        this.consecutiveRejectedCount = 0
+        this.consecutiveRejectedSpeedKmh = null
       }
     }
 

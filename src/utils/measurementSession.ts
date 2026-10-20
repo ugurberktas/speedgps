@@ -1,6 +1,6 @@
 /**
  * SpeedGPS — Ölçüm Oturumu ve Kayıt Mantığı
- * UI Yenileme & Yeni Ölçüm Özelliği
+ * Ölçüm Oturumu ve Hızı Kaydet Özelliği
  */
 
 export interface SavedMeasurement {
@@ -76,13 +76,14 @@ export function canSaveMeasurement(
   speedKmh: number | null,
   gpsStatus: string,
   isStale: boolean = false,
-  isPaused: boolean = false
+  isPaused: boolean = false,
+  isRejected: boolean = false
 ): boolean {
   if (gpsStatus !== 'aktif') {
     return false
   }
 
-  if (isStale || isPaused) {
+  if (isStale || isPaused || isRejected) {
     return false
   }
 

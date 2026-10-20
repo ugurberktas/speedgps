@@ -11,6 +11,7 @@ import {
 } from './gpsReliability'
 import {
   updateSessionStats,
+  calculateAverageSpeedFromDistance,
   INITIAL_SESSION_STATS,
 } from './measurementSession'
 import { calculateHaversineDistance, type GpsPoint } from './gpsMath'
@@ -236,9 +237,17 @@ describe('SpeedGPS — Sprint 6.4 / Adım 2: Akıllı Haversine İyileştirmesi'
 
       // 16 saniye sonunda toplam mesafe tam 8.0 metre birikir (hiçbir mesafe kaybolmaz)
       expect(stats.distanceMeters).toBeCloseTo(8.0, 1)
-      expect(stats.maxSpeedKmh).toBeCloseTo(1.8, 1)
-      // İlk 7 saniye durağan (0 km/sa) ve sonraki 9 saniye yürüyüş (1.8 km/sa) ortalaması: ~1.0 km/sa
+      // V3 Aşama 3 / Kural 11-12 Doğrulaması:
+      // 1) Uygulamanın zaman ağırlıklı hız integrali ortalaması:
+      // İlk 7 saniye çapa eşiği altında gürültü filtresi hızı 0 km/sa tutar; sonraki 9 saniye yürüyüş 1.8 km/sa'dir:
+      // (7 * 0 + 9 * 1.8) / 16 = 16.2 / 16 = ~1.0 km/sa.
       expect(stats.avgSpeedKmh).toBeCloseTo(1.0, 1)
+
+      // 2) Saf fiziksel yer değiştirme ortalama hızı (d / t):
+      // 8.0 metre / 16 saniye = 0.5 m/s = 1.8 km/sa.
+      const physicalAverageSpeedKmh = calculateAverageSpeedFromDistance(stats.distanceMeters, 16)
+      expect(physicalAverageSpeedKmh).toBeCloseTo(1.8, 1)
+      // Koordinat mesafesi ile hız integrali sahte bir hesapla eşitlenmez; her iki model kendi tanımına göre doğrudur.
     })
 
     it('Yürüyüş durduğunda 3 saniye sonra hız güvenle 0 km/sa değerine düşer', () => {

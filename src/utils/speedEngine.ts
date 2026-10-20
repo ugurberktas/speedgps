@@ -36,11 +36,16 @@ export interface GpsReadingInput {
   timestamp: number
 }
 
+export type SpeedMeasurementStatus = 'valid' | 'held' | 'rejected' | 'initial'
+
 export interface SpeedCalculationResult {
   speedKmh: number | null
   speedMs: number | null
   source: SpeedSource
   newPoint: GpsPoint | null
+  isAccepted: boolean
+  isSpikeRejected?: boolean
+  status: SpeedMeasurementStatus
 }
 
 /**
@@ -57,6 +62,8 @@ export function resolveSpeed(
       speedMs: null,
       source: 'none',
       newPoint: previousPoint,
+      isAccepted: false,
+      status: 'rejected',
     }
   }
 
@@ -67,6 +74,8 @@ export function resolveSpeed(
       speedMs: null,
       source: 'none',
       newPoint: previousPoint,
+      isAccepted: false,
+      status: 'rejected',
     }
   }
 
@@ -95,6 +104,8 @@ export function resolveSpeed(
       speedMs: rawSpeed,
       source: 'gps',
       newPoint: currentPoint,
+      isAccepted: true,
+      status: 'valid',
     }
   }
 
@@ -106,6 +117,8 @@ export function resolveSpeed(
       speedMs: null,
       source: 'none',
       newPoint: currentPoint,
+      isAccepted: false,
+      status: 'initial',
     }
   }
 
@@ -129,6 +142,8 @@ export function resolveSpeed(
       speedMs: null,
       source: 'none',
       newPoint: currentPoint,
+      isAccepted: false,
+      status: 'rejected',
     }
   }
 
@@ -142,6 +157,8 @@ export function resolveSpeed(
       speedMs: null,
       source: 'none',
       newPoint: currentPoint,
+      isAccepted: false,
+      status: 'rejected',
     }
   }
 
@@ -160,6 +177,8 @@ export function resolveSpeed(
       speedMs: null,
       source: 'none',
       newPoint: previousPoint,
+      isAccepted: false,
+      status: 'rejected',
     }
   }
 
@@ -170,6 +189,8 @@ export function resolveSpeed(
       speedMs: null,
       source: 'none',
       newPoint: currentPoint,
+      isAccepted: false,
+      status: 'rejected',
     }
   }
 
@@ -183,6 +204,8 @@ export function resolveSpeed(
       speedMs,
       source: 'haversine',
       newPoint: currentPoint,
+      isAccepted: true,
+      status: 'valid',
     }
   }
 
@@ -192,6 +215,8 @@ export function resolveSpeed(
     speedMs: null,
     source: 'none',
     newPoint: currentPoint,
+    isAccepted: false,
+    status: 'rejected',
   }
 }
 
@@ -210,6 +235,8 @@ export class GpsSpeedTracker {
   private lastConfirmedHaversineSpeedKmh: number | null = null
   private maxDistFromAnchor: number = 0
   private lastProgressTimestamp: number = 0
+  private isHaversineAnchorSuspect: boolean = false
+  private lastRejectedHaversinePoint: GpsPoint | null = null
 
   public getSpeedFilter(): SpeedFilter {
     return this.speedFilter
@@ -236,7 +263,9 @@ export class GpsSpeedTracker {
     const rawResult = resolveSpeed(reading, this.previousPoint)
 
     if (rawResult.source === 'none') {
-      this.previousPoint = rawResult.newPoint
+      if (prevPointBefore === null) {
+        this.previousPoint = rawResult.newPoint
+      }
       this.speedSource = 'none'
       this.currentSpeedKmh = null
       if (
@@ -248,11 +277,13 @@ export class GpsSpeedTracker {
         this.maxDistFromAnchor = 0
         this.lastProgressTimestamp = 0
       }
-      return rawResult
+      return {
+        ...rawResult,
+        isAccepted: false,
+        isSpikeRejected: false,
+        status: prevPointBefore === null && rawResult.newPoint !== null ? 'initial' : 'rejected',
+      }
     }
-
-    this.previousPoint = rawResult.newPoint
-    this.speedSource = rawResult.source
 
     const timeDeltaSeconds =
       prevPointBefore && reading.timestamp > prevPointBefore.timestamp
@@ -261,11 +292,6 @@ export class GpsSpeedTracker {
 
     // 1. Doğrudan GPS hızı (coords.speed)
     if (rawResult.source === 'gps') {
-      this.haversineAnchorPoint = rawResult.newPoint
-      this.lastConfirmedHaversineSpeedKmh = null
-      this.maxDistFromAnchor = 0
-      this.lastProgressTimestamp = rawResult.newPoint?.timestamp ?? 0
-
       let distanceMeters: number | null = null
       if (prevPointBefore) {
         distanceMeters = calculateHaversineDistance(prevPointBefore, {
@@ -293,6 +319,33 @@ export class GpsSpeedTracker {
         }
       }
 
+      if (filterResult.isSpikeRejected) {
+        // Hız sıçraması reddedildi:
+        // 1. Önceki konum referansı sıçrayan noktaya güncellenmez (prevPointBefore korunur)
+        // 2. Çapa sıçrayan noktaya güncellenmez
+        // 3. Ekranda tutulan hız korunur ama bu örnek YENİ bir geçerli ölçüm kabul edilmez (isAccepted: false)
+        this.currentSpeedKmh = filterResult.filteredSpeedKmh
+        return {
+          speedKmh: filterResult.filteredSpeedKmh,
+          speedMs:
+            filterResult.filteredSpeedKmh !== null
+              ? Math.round((filterResult.filteredSpeedKmh / 3.6) * 100) / 100
+              : null,
+          source: 'gps',
+          newPoint: prevPointBefore,
+          isAccepted: false,
+          isSpikeRejected: true,
+          status: 'held',
+        }
+      }
+
+      // Geçerli okuma: önceki noktayı ve çapa referansını güncelle
+      this.previousPoint = rawResult.newPoint
+      this.speedSource = 'gps'
+      this.haversineAnchorPoint = rawResult.newPoint
+      this.lastConfirmedHaversineSpeedKmh = null
+      this.maxDistFromAnchor = 0
+      this.lastProgressTimestamp = rawResult.newPoint?.timestamp ?? 0
       this.currentSpeedKmh = filterResult.filteredSpeedKmh
 
       return {
@@ -303,6 +356,9 @@ export class GpsSpeedTracker {
             : null,
         source: 'gps',
         newPoint: rawResult.newPoint,
+        isAccepted: true,
+        isSpikeRejected: false,
+        status: 'valid',
       }
     }
 
@@ -312,6 +368,44 @@ export class GpsSpeedTracker {
       this.haversineAnchorPoint = prevPointBefore ?? currentGpsPoint
       this.maxDistFromAnchor = 0
       this.lastProgressTimestamp = currentGpsPoint.timestamp
+    }
+
+    // Şüpheli koordinat sıçraması karantinası ve yeniden referans edinme (Codex B3/P1 düzeltmesi):
+    // Eğer önceki okumada çapa mesafesi aşırı sıçrama nedeniyle reddedildiyse ve cihaz bu yeni noktada sabit duruyorsa,
+    // eski çapa ile yeni nokta arasındaki mesafeyi zaman geçtikçe seyrelterek sahte hıza dönüştürme!
+    if (this.isHaversineAnchorSuspect && this.lastRejectedHaversinePoint) {
+      const distFromRejected = calculateHaversineDistance(
+        this.lastRejectedHaversinePoint,
+        currentGpsPoint
+      )
+      const combinedAcc = calculateCombinedAccuracy(
+        this.lastRejectedHaversinePoint.accuracy,
+        reading.coords.accuracy
+      )
+      const threshold = getEffectiveDistanceThreshold(combinedAcc)
+
+      // Cihaz reddedilen sıçrama noktasında duruyorsa (mesafe < eşik), yeni konumu sıfır hızla güvenle yeniden referans edin
+      if (distFromRejected !== null && distFromRejected < threshold) {
+        this.haversineAnchorPoint = currentGpsPoint
+        this.maxDistFromAnchor = 0
+        this.lastProgressTimestamp = currentGpsPoint.timestamp
+        this.lastConfirmedHaversineSpeedKmh = 0
+        this.currentSpeedKmh = 0
+        this.isHaversineAnchorSuspect = false
+        this.lastRejectedHaversinePoint = null
+        this.previousPoint = rawResult.newPoint
+        this.speedSource = 'haversine'
+
+        return {
+          speedKmh: 0,
+          speedMs: 0,
+          source: 'haversine',
+          newPoint: rawResult.newPoint,
+          isAccepted: true,
+          isSpikeRejected: false,
+          status: 'valid',
+        }
+      }
     }
 
     const distFromAnchor = this.haversineAnchorPoint
@@ -329,6 +423,11 @@ export class GpsSpeedTracker {
       this.lastProgressTimestamp = currentGpsPoint.timestamp
     }
 
+    const timeWithoutProgress =
+      this.lastProgressTimestamp > 0
+        ? (currentGpsPoint.timestamp - this.lastProgressTimestamp) / 1000
+        : 0
+
     const combinedAccuracy = calculateCombinedAccuracy(
       this.haversineAnchorPoint?.accuracy,
       reading.coords.accuracy
@@ -339,12 +438,40 @@ export class GpsSpeedTracker {
       distFromAnchor !== null && distFromAnchor >= effectiveDistanceThreshold - 0.01
 
     if (hasBrokenThreshold) {
+      // Hareketsizlik denetimi (Codex B3): Eşik aşılmış görünse dahi, eğer cihaz en az 3 saniyedir
+      // hiçbir ilerleme kaydetmediyse ve durma durumundaysa, eski çapayı zamanla seyrelterek sahte hız üretme!
+      if (
+        timeWithoutProgress >= GPS_RELIABILITY_CONFIG.HAVERSINE_STATIONARY_TIMEOUT_SECONDS &&
+        (!this.lastConfirmedHaversineSpeedKmh || this.lastConfirmedHaversineSpeedKmh === 0)
+      ) {
+        this.lastConfirmedHaversineSpeedKmh = 0
+        this.haversineAnchorPoint = currentGpsPoint
+        this.maxDistFromAnchor = 0
+        this.lastProgressTimestamp = currentGpsPoint.timestamp
+        this.currentSpeedKmh = 0
+        this.previousPoint = rawResult.newPoint
+        this.speedSource = 'haversine'
+        this.isHaversineAnchorSuspect = false
+        this.lastRejectedHaversinePoint = null
+
+        return {
+          speedKmh: 0,
+          speedMs: 0,
+          source: 'haversine',
+          newPoint: rawResult.newPoint,
+          isAccepted: true,
+          isSpikeRejected: false,
+          status: 'valid',
+        }
+      }
+
       // Çapa eşiği aşıldı: Gerçek yer değiştirme doğrulandı
       const displacementSpeedKmh =
         timeFromAnchor > 0 ? (distFromAnchor / timeFromAnchor) * 3.6 : rawResult.speedKmh
 
-      // Sıfır / durma durumundan ilk doğrulanmış harekete geçişte önceki medyan geçmişini sıfırla
-      if (!this.lastConfirmedHaversineSpeedKmh || this.lastConfirmedHaversineSpeedKmh === 0) {
+      // Sıfır / durma durumundan ilk doğrulanmış harekete geçişte önceki medyan geçmişini sıfırla.
+      const wasStationary = this.currentSpeedKmh === null || this.currentSpeedKmh === 0
+      if (wasStationary && (!this.lastConfirmedHaversineSpeedKmh || this.lastConfirmedHaversineSpeedKmh === 0)) {
         this.speedFilter.reset()
       }
 
@@ -355,13 +482,32 @@ export class GpsSpeedTracker {
         accuracyMeters: combinedAccuracy,
       })
 
-      if (!filterResult.isSpikeRejected) {
-        this.lastConfirmedHaversineSpeedKmh = filterResult.filteredSpeedKmh
-        this.haversineAnchorPoint = currentGpsPoint
-        this.maxDistFromAnchor = 0
-        this.lastProgressTimestamp = currentGpsPoint.timestamp
+      if (filterResult.isSpikeRejected) {
+        this.isHaversineAnchorSuspect = true
+        this.lastRejectedHaversinePoint = currentGpsPoint
+        this.currentSpeedKmh = filterResult.filteredSpeedKmh
+        return {
+          speedKmh: filterResult.filteredSpeedKmh,
+          speedMs:
+            filterResult.filteredSpeedKmh !== null
+              ? Math.round((filterResult.filteredSpeedKmh / 3.6) * 100) / 100
+              : null,
+          source: 'haversine',
+          newPoint: prevPointBefore,
+          isAccepted: false,
+          isSpikeRejected: true,
+          status: 'held',
+        }
       }
 
+      this.isHaversineAnchorSuspect = false
+      this.lastRejectedHaversinePoint = null
+      this.previousPoint = rawResult.newPoint
+      this.speedSource = 'haversine'
+      this.lastConfirmedHaversineSpeedKmh = filterResult.filteredSpeedKmh
+      this.haversineAnchorPoint = currentGpsPoint
+      this.maxDistFromAnchor = 0
+      this.lastProgressTimestamp = currentGpsPoint.timestamp
       this.currentSpeedKmh = filterResult.filteredSpeedKmh
 
       return {
@@ -372,19 +518,22 @@ export class GpsSpeedTracker {
             : null,
         source: 'haversine',
         newPoint: rawResult.newPoint,
+        isAccepted: true,
+        isSpikeRejected: false,
+        status: 'valid',
       }
     } else {
       // Çapa eşiği henüz aşılmadı: Konum hata payı dairesi içindeyiz
+      this.previousPoint = rawResult.newPoint
+      this.speedSource = 'haversine'
+      this.isHaversineAnchorSuspect = false
+      this.lastRejectedHaversinePoint = null
+
       if (
         this.lastConfirmedHaversineSpeedKmh !== null &&
         this.lastConfirmedHaversineSpeedKmh > 0
       ) {
         // Yürüyüş devam ediyordu. İlerleme durdu mu yoksa adımlar arasında mı?
-        const timeWithoutProgress =
-          this.lastProgressTimestamp > 0
-            ? (currentGpsPoint.timestamp - this.lastProgressTimestamp) / 1000
-            : timeFromAnchor
-
         if (timeWithoutProgress >= GPS_RELIABILITY_CONFIG.HAVERSINE_STATIONARY_TIMEOUT_SECONDS) {
           // 3 saniyedir ilerleme kaydedilmedi -> Durdu kabul et
           this.lastConfirmedHaversineSpeedKmh = 0
@@ -398,6 +547,9 @@ export class GpsSpeedTracker {
             speedMs: 0,
             source: 'haversine',
             newPoint: rawResult.newPoint,
+            isAccepted: true,
+            isSpikeRejected: false,
+            status: 'valid',
           }
         } else {
           // Yürüyüş devam ediyor (çapa biriktirme aralığında)
@@ -407,11 +559,28 @@ export class GpsSpeedTracker {
             speedMs: Math.round((this.lastConfirmedHaversineSpeedKmh / 3.6) * 100) / 100,
             source: 'haversine',
             newPoint: rawResult.newPoint,
+            isAccepted: true,
+            isSpikeRejected: false,
+            status: 'valid',
           }
         }
       }
 
-      // Kullanıcı zaten duruyordu veya henüz doğrulanmış bir hareket başlamadı (desk jitter)
+      // Kullanıcı duruyordu veya henüz doğrulanmış bir hareket başlamadı (desk jitter):
+      // Gerçek duruş durumunda (distFromAnchor sıfıra yakın veya ilerleme yokken)
+      // çapa referansını taze tut (Sorun B düzeltmesi: 60 saniye durduktan sonra hareket edince
+      // 5 metreyi 60 saniyeye bölüp 0.3 km/sa üretmesini engelle).
+      if (
+        distFromAnchor === null ||
+        distFromAnchor < 0.2 ||
+        timeWithoutProgress >= GPS_RELIABILITY_CONFIG.HAVERSINE_STATIONARY_TIMEOUT_SECONDS
+      ) {
+        this.haversineAnchorPoint = currentGpsPoint
+        this.maxDistFromAnchor = 0
+        this.lastProgressTimestamp = currentGpsPoint.timestamp
+      }
+
+      this.lastConfirmedHaversineSpeedKmh = 0
       this.currentSpeedKmh = 0
 
       return {
@@ -419,6 +588,9 @@ export class GpsSpeedTracker {
         speedMs: 0,
         source: 'haversine',
         newPoint: rawResult.newPoint,
+        isAccepted: true,
+        isSpikeRejected: false,
+        status: 'valid',
       }
     }
   }
@@ -431,6 +603,8 @@ export class GpsSpeedTracker {
     this.lastConfirmedHaversineSpeedKmh = null
     this.maxDistFromAnchor = 0
     this.lastProgressTimestamp = 0
+    this.isHaversineAnchorSuspect = false
+    this.lastRejectedHaversinePoint = null
     this.speedFilter.reset()
   }
 }

@@ -8,7 +8,7 @@
  * 4. Yavaş yürüyüş (çapa ve biriktirme ile tutarlı istatistikler)
  * 5. GPS kesintisi (tünel veya arka plandaki belirsiz sürenin ortalamayı bozmaması)
  * 6. Geçerli 0 km/sa ölçümünün ortalamaya dahil edilmesi
- * 7. Yeni Ölçüm ile sıfırlama (canlı GPS motorunun korunması)
+ * 7. Oturum sıfırlama (canlı GPS motorunun korunması)
  * 8. Mesafe, süre ve ortalama hızın birbirleriyle tutarlılığı
  */
 
@@ -208,7 +208,7 @@ describe('SpeedGPS — Sprint 6.4 / Adım 4: Ortalama Hız ve İstatistik Doğru
     })
   })
 
-  describe('7. Yeni Ölçüm ile Sıfırlama ve GPS Motorunun Korunması', () => {
+  describe('7. Oturum Sıfırlama ve GPS Motorunun Korunması', () => {
     it('resetSessionStats oturum istatistiklerini temizler, ancak tracker nesnesi canlı kalır', () => {
       const tracker = new GpsSpeedTracker()
       tracker.processReading({
@@ -220,7 +220,7 @@ describe('SpeedGPS — Sprint 6.4 / Adım 4: Ortalama Hız ve İstatistik Doğru
       expect(stats.avgSpeedKmh).toBe(70.0)
       expect(stats.distanceMeters).toBe(200)
 
-      // Yeni Ölçüm yapıldı
+      // Oturum sıfırlandı
       stats = resetSessionStats()
       expect(stats.avgSpeedKmh).toBeNull()
       expect(stats.maxSpeedKmh).toBeNull()

@@ -104,9 +104,10 @@ export const SpeedometerGauge: React.FC<SpeedometerGaugeProps> = ({
           fill="none"
           stroke="url(#speedGaugeGradient)"
           strokeWidth="9"
-          strokeLinecap="round"
+          strokeLinecap={progress > 0 ? 'round' : 'butt'}
           strokeDasharray={arcLength}
           strokeDashoffset={dashOffset}
+          opacity={progress > 0 ? 1 : 0}
           filter={progress > 0.02 ? 'url(#gaugeGlow)' : undefined}
         />
       </svg>

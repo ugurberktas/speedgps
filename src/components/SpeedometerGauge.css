@@ -29,23 +29,30 @@
 
 /* Ölçek Çizgileri ve Etiketleri */
 .gauge-tick-line {
-  stroke: #cbd5e1;
+  stroke: #94a3b8;
   stroke-width: 1.5;
   stroke-linecap: round;
 }
 
 .gauge-tick-label {
-  font-size: 9.5px;
+  font-size: 10px;
   font-weight: 700;
-  fill: #94a3b8;
+  fill: #334155;
   font-family: inherit;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .gauge-active-arc,
+  .gauge-track-arc {
+    transition: none !important;
+  }
+}
+
 /* Aktif Hız Yayı */
 .gauge-active-arc {
-  transition: stroke-dashoffset 0.28s cubic-bezier(0.2, 0.8, 0.25, 1);
+  transition: stroke-dashoffset 0.28s cubic-bezier(0.2, 0.8, 0.25, 1), opacity 0.15s ease;
 }
 
 /* Kadran Merkezindeki Dijital Okuma Alanı */

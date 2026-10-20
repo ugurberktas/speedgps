@@ -61,15 +61,21 @@ describe('Sprint 5 / Adım 2: İstatistik ve GPS Güncellik Kontrolü', () => {
       expect(spikeReading.isSpikeRejected).toBe(true)
       expect(spikeReading.filteredSpeedKmh).toBe(45)
 
-      // İstatistiğe yalnızca filtrelenmiş değer girer
-      stats = updateSessionStats(stats, spikeReading.filteredSpeedKmh, 12)
+      // V3 Aşama 3 / B1 Kuralı: Reddedilen sıçrama istatistiklere ve mesafeye eklenmez
+      if (!spikeReading.isSpikeRejected) {
+        stats = updateSessionStats(stats, spikeReading.filteredSpeedKmh, 12)
+      }
       expect(stats.maxSpeedKmh).toBe(45) // 180 kesinlikle yansımaz
+      expect(stats.distanceMeters).toBe(12) // Sadece ilk okumanın 12 metresi kalır
 
       // 320 km/sa fiziksel imkansız tekil sıçrama
       const superSpike = filter.filter(320, { source: 'gps', timeDeltaSeconds: 1 })
       expect(superSpike.isSpikeRejected).toBe(true)
-      stats = updateSessionStats(stats, superSpike.filteredSpeedKmh, 12)
+      if (!superSpike.isSpikeRejected) {
+        stats = updateSessionStats(stats, superSpike.filteredSpeedKmh, 12)
+      }
       expect(stats.maxSpeedKmh).toBe(45)
+      expect(stats.distanceMeters).toBe(12)
     })
   })
 
@@ -177,7 +183,7 @@ describe('Sprint 5 / Adım 2: İstatistik ve GPS Güncellik Kontrolü', () => {
     })
   })
 
-  describe('6. Yeni Ölçüm ile oturum sıfırlama', () => {
+  describe('6. Hızı Kaydet ve oturum sıfırlama', () => {
     it('Canlı GPS takibi kesilmez, anlık hız korunur, oturum istatistikleri sıfırdan başlar', () => {
       const tracker = new GpsSpeedTracker()
       let sessionStats = { ...INITIAL_SESSION_STATS }
@@ -193,7 +199,7 @@ describe('Sprint 5 / Adım 2: İstatistik ve GPS Güncellik Kontrolü', () => {
       expect(sessionStats.maxSpeedKmh).toBe(54)
       expect(sessionStats.distanceMeters).toBe(50)
 
-      // 2. Kullanıcı "Yeni Ölçüm" butonuna bastı:
+      // 2. Kullanıcı "Hızı Kaydet" butonuna bastı:
       // a) Anlık hız geçmişe kaydedilir
       expect(canSaveMeasurement(reading.speedKmh, 'aktif', false)).toBe(true)
       const saved = createSavedMeasurement(1, reading.speedKmh!)

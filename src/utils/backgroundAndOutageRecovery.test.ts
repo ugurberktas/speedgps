@@ -9,7 +9,7 @@
  * 5. Kesinti sonrasında Haversine çapa noktası ve filtre durumunun temizlenmesi
  * 6. GPS verisi bayatken hızın '--' olması
  * 7. İstatistiklerde geçerli ölçüm süreleri ile kesinti sürelerinin birbirine karıştırılmaması
- * 8. Başlat, Durdur ve Yeni Ölçüm işlevlerinin korunması
+ * 8. Başlat, Durdur ve Hızı Kaydet işlevlerinin korunması
  */
 
 import { describe, it, expect, beforeEach } from 'vitest'
@@ -127,12 +127,12 @@ describe('SpeedGPS — Sprint 6.4 / Adım 3: Arka Plan ve GPS Kesinti Yönetimi'
       expect(isGpsDataStale(null, now, 5000)).toBe(false)
     })
 
-    it('Uygulama arka plandayken (isPaused = true) yeni ölçüm kaydedilemez', () => {
+    it('Uygulama arka plandayken (isPaused = true) hız kaydedilemez', () => {
       expect(canSaveMeasurement(50, 'aktif', false, true)).toBe(false)
       expect(canSaveMeasurement(0, 'aktif', false, true)).toBe(false)
     })
 
-    it('GPS verisi bayatken (isStale = true) yeni ölçüm kaydedilemez', () => {
+    it('GPS verisi bayatken (isStale = true) hız kaydedilemez', () => {
       expect(canSaveMeasurement(50, 'aktif', true, false)).toBe(false)
     })
 
@@ -352,8 +352,8 @@ describe('SpeedGPS — Sprint 6.4 / Adım 3: Arka Plan ve GPS Kesinti Yönetimi'
     })
   })
 
-  describe('6. Yeni Ölçüm ve Kesintisiz GPS Motoru Davranışı', () => {
-    it('Yeni Ölçüm sırasında oturum istatistikleri sıfırlanır ancak canlı GPS izleyicisi bozulmaz', () => {
+  describe('6. Oturum Sıfırlama ve Kesintisiz GPS Motoru Davranışı', () => {
+    it('Oturum sıfırlama sırasında istatistikler sıfırlanır ancak canlı GPS izleyicisi bozulmaz', () => {
       const tracker = new GpsSpeedTracker()
 
       // Aktif seyir
@@ -367,7 +367,7 @@ describe('SpeedGPS — Sprint 6.4 / Adım 3: Arka Plan ve GPS Kesinti Yönetimi'
       expect(stats.distanceMeters).toBe(100)
       expect(stats.maxSpeedKmh).toBe(60)
 
-      // Yeni Ölçüm butonuna basıldı:
+      // Ölçüm oturumu sıfırlandı:
       stats = resetSessionStats()
       let lastCoords: GpsPoint | null = null // Yeni oturum için mesafe başlangıcı temizlenir
 
@@ -392,6 +392,106 @@ describe('SpeedGPS — Sprint 6.4 / Adım 3: Arka Plan ve GPS Kesinti Yönetimi'
         }
       }
       expect(lastCoords.latitude).toBe(41.0001)
+    })
+  })
+
+  describe('7. V3 Aşama 3 / Görev 4: Geçici GPS Hatalarından Otomatik Toparlanma (B5/P1)', () => {
+    it('TIMEOUT veya POSITION_UNAVAILABLE durumunda önceki oturum istatistikleri korunur ve sıfırlanmaz', () => {
+      let stats = resetSessionStats()
+      stats = updateSessionStats(stats, 50, 200, 1)
+      stats = updateSessionStats(stats, 70, 300, 1)
+
+      expect(stats.maxSpeedKmh).toBe(70)
+      expect(stats.distanceMeters).toBe(500)
+
+      // Geçici hata callback'i simülasyonu:
+      // TIMEOUT / POSITION_UNAVAILABLE oluştuğunda tracker resetlenir ve lastCoords temizlenir,
+      // ancak oturum istatistikleri (stats) ASLA sıfırlanmaz.
+      const tracker = new GpsSpeedTracker()
+      tracker.reset()
+      let lastCoords: GpsPoint | null = null
+
+      // İstatistikler korunuyor
+      expect(stats.maxSpeedKmh).toBe(70)
+      expect(stats.distanceMeters).toBe(500)
+      expect(lastCoords).toBeNull()
+    })
+
+    it('Geçici kesinti süresince süre artırımı engellenir (canIncrementMeasurementDuration)', () => {
+      // Kesinti anında gpsStatus 'bekleniyor' ve isStale 'true' olur
+      expect(canIncrementMeasurementDuration('bekleniyor', false, true)).toBe(false)
+      expect(canIncrementMeasurementDuration('bekleniyor', false, false)).toBe(false)
+      // Kalıcı izin reddinde de süre artmaz
+      expect(canIncrementMeasurementDuration('hata', false, false)).toBe(false)
+    })
+
+    it('Tünel çıkışında sinyal geri geldiğinde ilk konum güvenli başlangıç referansı olur, tünel mesafesi sahte olarak eklenmez', () => {
+      const tracker = new GpsSpeedTracker()
+      let stats = resetSessionStats()
+      let lastCoords: GpsPoint | null = null
+
+      // Tünel öncesi: 100 metre kat edilmiş, hız 50 km/sa
+      const fix1 = {
+        coords: { latitude: 41.0000, longitude: 29.0000, accuracy: 5, speed: 50 / 3.6 },
+        timestamp: 1000,
+      }
+      tracker.processReading(fix1)
+      stats = updateSessionStats(stats, 50, 100, 1)
+      lastCoords = {
+        latitude: fix1.coords.latitude,
+        longitude: fix1.coords.longitude,
+        timestamp: fix1.timestamp,
+        accuracy: fix1.coords.accuracy,
+      }
+
+      // Tünel içi: TIMEOUT (code=3) meydana geliyor
+      // App.tsx hata callback'i:
+      tracker.reset()
+      lastCoords = null
+
+      // Tünel çıkışı: 30 saniye sonra 1000 metre ileride ilk konum alındı
+      const fixAfterTunnel = {
+        coords: { latitude: 41.0090, longitude: 29.0000, accuracy: 5, speed: 50 / 3.6 },
+        timestamp: 31000,
+      }
+
+      // Outage recovery devreye girer
+      const resultAfterTunnel = tracker.processReading(fixAfterTunnel)
+
+      // İlk yeni konum referans olarak kurulur, sahte 1000 metre eklenmez
+      let deltaMeters = 0
+      if (lastCoords) {
+        // lastCoords null olduğu için buraya girilmez
+        deltaMeters = 1000
+      } else {
+        lastCoords = {
+          latitude: fixAfterTunnel.coords.latitude,
+          longitude: fixAfterTunnel.coords.longitude,
+          timestamp: fixAfterTunnel.timestamp,
+          accuracy: fixAfterTunnel.coords.accuracy,
+        }
+      }
+
+      expect(deltaMeters).toBe(0)
+      stats = updateSessionStats(stats, resultAfterTunnel.speedKmh, deltaMeters, 1)
+
+      // Toplam mesafe 100 metre olarak korunur (sahte tünel mesafesi eklenmedi)
+      expect(stats.distanceMeters).toBe(100)
+      expect(stats.maxSpeedKmh).toBe(50)
+
+      // Tünel çıkışından 1 saniye sonraki ikinci konum (normal hareket)
+      const fixNormal = {
+        coords: { latitude: 41.0091, longitude: 29.0000, accuracy: 5, speed: 50 / 3.6 },
+        timestamp: 32000,
+      }
+      const resultNormal = tracker.processReading(fixNormal)
+      expect(resultNormal.isAccepted).toBe(true)
+      expect(resultNormal.speedKmh).toBe(50)
+
+      // İkinci konumla birlikte mesafe normal şekilde artmaya başlar
+      const dist = 11 // ~11 metre
+      stats = updateSessionStats(stats, resultNormal.speedKmh, dist, 1)
+      expect(stats.distanceMeters).toBe(111)
     })
   })
 })

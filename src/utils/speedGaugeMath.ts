@@ -16,7 +16,7 @@ export const GAUGE_SCALES: Record<SpeedUnit, GaugeScaleConfig> = {
   },
   ms: {
     max: 35,
-    ticks: [0, 10, 20, 30],
+    ticks: [0, 10, 20, 30, 35],
   },
 }
 

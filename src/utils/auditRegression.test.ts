@@ -14,7 +14,7 @@ const reading = (seconds: number, meters: number, speedKmh: number | null) => ({
 })
 
 describe('Independent audit: known measurement defects', () => {
-  it.fails('recovers from one wrong initial hardware speed after repeated consistent readings', () => {
+  it('recovers from one wrong initial hardware speed after repeated consistent readings', () => {
     const tracker = new GpsSpeedTracker()
     tracker.processReading(reading(0, 0, 120))
     let result
@@ -22,14 +22,14 @@ describe('Independent audit: known measurement defects', () => {
     expect(result?.speedKmh).toBe(36)
   })
 
-  it.fails('does not divide newly started movement by the preceding stationary minute', () => {
+  it('does not divide newly started movement by the preceding stationary minute', () => {
     const tracker = new GpsSpeedTracker()
     for (let t = 0; t <= 60; t++) tracker.processReading(reading(t, 0, null))
     const result = tracker.processReading(reading(61, 5, null))
     expect(result.speedKmh).toBeCloseTo(18, 0)
   })
 
-  it.fails('does not eventually accept a rejected relocation while the new position remains stationary', () => {
+  it('does not eventually accept a rejected relocation while the new position remains stationary', () => {
     const tracker = new GpsSpeedTracker()
     tracker.processReading(reading(0, 0, null))
     tracker.processReading(reading(1, 0, null))

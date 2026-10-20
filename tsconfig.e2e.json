@@ -6,6 +6,7 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "skipLibCheck": true,
+    "types": ["node"],
     "noEmit": true,
     "strict": true
   },

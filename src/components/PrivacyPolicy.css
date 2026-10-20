@@ -162,6 +162,67 @@
   border-top: 1px solid var(--border-light);
 }
 
+/* Canlı Ölçüm Arka Plan Bilgilendirme ve Durdurma Çubuğu */
+.privacy-active-tracking-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background-color: #fff7ed;
+  border: 1px solid #fed7aa;
+  padding: 10px 16px;
+  border-radius: 18px;
+  box-shadow: 0 2px 8px rgba(234, 88, 12, 0.08);
+}
+
+.privacy-active-tracking-info {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #9a3412;
+  line-height: 1.35;
+}
+
+.privacy-tracking-dot {
+  width: 9px;
+  height: 9px;
+  min-width: 9px;
+  border-radius: 50%;
+  background-color: #ea580c;
+  animation: pulse-dot 1.8s infinite;
+}
+
+.privacy-stop-btn {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  color: #ffffff;
+  border: none;
+  border-radius: 12px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 72px;
+  box-shadow: 0 2px 6px rgba(220, 38, 38, 0.25);
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.privacy-stop-btn:hover {
+  background: linear-gradient(135deg, #f87171 0%, #b91c1c 100%);
+  transform: translateY(-1px);
+}
+
+.privacy-stop-btn:focus-visible {
+  outline: 2px solid #dc2626;
+  outline-offset: 2px;
+}
+
 @media (max-width: 480px) {
   .privacy-card {
     padding: 24px 18px;
@@ -173,5 +234,11 @@
   .privacy-section p,
   .privacy-section li {
     font-size: 13px;
+  }
+  .privacy-active-tracking-banner {
+    padding: 8px 12px;
+  }
+  .privacy-active-tracking-info {
+    font-size: 12px;
   }
 }

@@ -100,5 +100,10 @@ describe('speedGaugeMath Utilities', () => {
       expect(GAUGE_SCALES.kmh.ticks).toEqual([0, 20, 40, 60, 80, 100, 120])
       expect(GAUGE_SCALES.kmh.max).toBe(120)
     })
+
+    it('m/s ölçeği 0, 10, 20, 30, 35 adımlarını içermelidir', () => {
+      expect(GAUGE_SCALES.ms.ticks).toEqual([0, 10, 20, 30, 35])
+      expect(GAUGE_SCALES.ms.max).toBe(35)
+    })
   })
 })

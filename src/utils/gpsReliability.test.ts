@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest'
 import {
   GPS_RELIABILITY_CONFIG,
   isValidAccuracy,
+  isValidGpsTimestamp,
+  calculateCombinedAccuracy,
+  getEffectiveDistanceThreshold,
   isReliableGpsReading,
   isValidTimestampSequence,
   isGpsDataStale,
@@ -13,6 +16,7 @@ describe('GPS Reliability (gpsReliability)', () => {
     it('güvenilirlik eşikleri tek bir yerde tanımlanmıştır', () => {
       expect(GPS_RELIABILITY_CONFIG.MAX_ACCEPTABLE_ACCURACY_METERS).toBe(100)
       expect(GPS_RELIABILITY_CONFIG.STALE_DATA_TIMEOUT_MS).toBe(5000)
+      expect(GPS_RELIABILITY_CONFIG.MAX_FUTURE_TIMESTAMP_DRIFT_MS).toBe(15000)
     })
   })
 
@@ -23,13 +27,16 @@ describe('GPS Reliability (gpsReliability)', () => {
       expect(isValidAccuracy(100)).toBe(true)
     })
 
+    it('accuracy=0 değerini geçerli negatif-olmayan değer olarak onaylar', () => {
+      expect(isValidAccuracy(0)).toBe(true)
+    })
+
     it('sağlanmayan doğruluk değerlerinde geriye dönük uyumluluk sağlar', () => {
       expect(isValidAccuracy(null)).toBe(true)
       expect(isValidAccuracy(undefined)).toBe(true)
     })
 
-    it('sıfır, negatif veya sayısal olmayan değerleri reddeder', () => {
-      expect(isValidAccuracy(0)).toBe(false)
+    it('negatif veya sayısal olmayan değerleri reddeder', () => {
       expect(isValidAccuracy(-10)).toBe(false)
       expect(isValidAccuracy(NaN)).toBe(false)
       expect(isValidAccuracy(Infinity)).toBe(false)
@@ -148,6 +155,64 @@ describe('GPS Reliability (gpsReliability)', () => {
       expect(isGpsDataStale(4999, now)).toBe(true) // 5.001 saniye önce
       expect(isGpsDataStale(2000, now)).toBe(true) // 8 saniye önce
       expect(isGpsDataStale(null, now)).toBe(true) // Hiç veri yok
+    })
+  })
+
+  describe('isValidGpsTimestamp (Zaman Damgası Geçerliliği ve Sınır Durumları)', () => {
+    it('pozitif ve makul zaman damgalarını onaylar', () => {
+      const wallTime = 100000
+      expect(isValidGpsTimestamp(100000, wallTime)).toBe(true)
+      expect(isValidGpsTimestamp(95000, wallTime)).toBe(true)
+      // 15 saniyeye kadar olan gelecek zaman toleransını onaylar
+      expect(isValidGpsTimestamp(115000, wallTime)).toBe(true)
+    })
+
+    it('sıfır, negatif ve sayısal olmayan zaman damgalarını reddeder', () => {
+      expect(isValidGpsTimestamp(0)).toBe(false)
+      expect(isValidGpsTimestamp(-500)).toBe(false)
+      expect(isValidGpsTimestamp(NaN)).toBe(false)
+      expect(isValidGpsTimestamp(Infinity)).toBe(false)
+      expect(isValidGpsTimestamp(null)).toBe(false)
+      expect(isValidGpsTimestamp(undefined)).toBe(false)
+      expect(isValidGpsTimestamp('100000')).toBe(false)
+    })
+
+    it('makul olmayan gelecek zamanlı zaman damgalarını reddeder', () => {
+      const wallTime = 100000
+      // 15 saniyeden (MAX_FUTURE_TIMESTAMP_DRIFT_MS) daha ilerideki zaman
+      expect(isValidGpsTimestamp(100000 + 15001, wallTime)).toBe(false)
+      expect(isValidGpsTimestamp(100000 + 60000, wallTime)).toBe(false)
+    })
+  })
+
+  describe('accuracy=0 ile Kombine Doğruluk ve Mesafe Eşiği', () => {
+    it('accuracy=0 okumasını genel GPS okuma doğrulamada kabul eder', () => {
+      const readingWithZeroAccuracy: GpsReliabilityCheckInput = {
+        coords: {
+          latitude: 41.0082,
+          longitude: 28.9784,
+          accuracy: 0,
+          speed: 10,
+        },
+        timestamp: 1000,
+      }
+      expect(isReliableGpsReading(readingWithZeroAccuracy, 2000)).toBe(true)
+    })
+
+    it('calculateCombinedAccuracy accuracy=0 değerini doğru ortalar', () => {
+      expect(calculateCombinedAccuracy(0, 10)).toBe(5)
+      expect(calculateCombinedAccuracy(0, 0)).toBe(0)
+      expect(calculateCombinedAccuracy(0, null)).toBe(0)
+    })
+
+    it('getEffectiveDistanceThreshold accuracy=0 olsa bile taban titreme eşiğini (2.0m) korur', () => {
+      expect(getEffectiveDistanceThreshold(0, 0)).toBe(
+        GPS_RELIABILITY_CONFIG.STATIONARY_DISTANCE_THRESHOLD_METERS
+      )
+      expect(getEffectiveDistanceThreshold(0, 1)).toBe(
+        GPS_RELIABILITY_CONFIG.STATIONARY_DISTANCE_THRESHOLD_METERS
+      )
+      expect(getEffectiveDistanceThreshold(0, 10)).toBe(5)
     })
   })
 })
