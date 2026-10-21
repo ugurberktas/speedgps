@@ -328,6 +328,10 @@
 }
 
 /* Top Controls: Mode & Unit Selector */
+.speed-reading-panel {
+  width: 100%;
+}
+
 .card-top-controls {
   display: flex;
   align-items: center;
@@ -441,7 +445,7 @@
 
 .unit-toggle-btn.active {
   background-color: #ffffff;
-  color: #ea580c;
+  color: #9a3412;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
@@ -548,7 +552,7 @@
 .btn-primary-start {
   width: 100%;
   min-height: 54px;
-  background: linear-gradient(135deg, #f97316 0%, #c2410c 100%);
+  background: linear-gradient(135deg, #c2410c 0%, #9a3412 100%);
   color: #ffffff;
   padding: 15px 20px;
   border-radius: 18px;
@@ -566,7 +570,7 @@
 }
 
 .btn-primary-start:hover {
-  background: linear-gradient(135deg, #ea580c 0%, #9a3412 100%);
+  background: linear-gradient(135deg, #9a3412 0%, #7c2d12 100%);
   transform: translateY(-1px);
   box-shadow: 0 8px 22px rgba(194, 65, 12, 0.4);
 }

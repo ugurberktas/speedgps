@@ -54,6 +54,14 @@ const STATUS_LABELS: Record<GpsStatus, string> = {
   hata: 'GPS Hatası',
 }
 
+function isPlausibleDistanceSegment(previous: GpsPoint, current: GpsPoint, meters: number | null): boolean {
+  const seconds = (current.timestamp - previous.timestamp) / 1000
+  if (meters === null || seconds <= 0) return false
+  const accuracy = calculateCombinedAccuracy(previous.accuracy, current.accuracy)
+  const maximum = (GPS_RELIABILITY_CONFIG.MAX_REALISTIC_SPEED_KMH / 3.6) * seconds + (accuracy || 10) * 2
+  return meters <= maximum
+}
+
 function App() {
   const [currentPath, setCurrentPath] = useState<string>(() => {
     if (typeof window !== 'undefined') {
@@ -90,6 +98,7 @@ function App() {
   const [isStale, setIsStale] = useState<boolean>(false)
   const [isPaused, setIsPaused] = useState<boolean>(false)
   const [isOutageRecovery, setIsOutageRecovery] = useState<boolean>(false)
+  const [isCurrentFixRejected, setIsCurrentFixRejected] = useState<boolean>(false)
   const [currentAccuracy, setCurrentAccuracy] = useState<number | null>(null)
 
   // Oturum istatistikleri ve süre
@@ -105,21 +114,24 @@ function App() {
   const watchIdRef = useRef<number | null>(null)
   const trackerRef = useRef<GpsSpeedTracker>(new GpsSpeedTracker())
   const lastCoordsRef = useRef<GpsPoint | null>(null)
+  const rejectedDistancePointRef = useRef<GpsPoint | null>(null)
   const lastFixTimestampRef = useRef<number | null>(null)
   const wakeLockRef = useRef<WakeLockManager>(new WakeLockManager())
   const gpsStatusRef = useRef<GpsStatus>(gpsStatus)
   const isPausedRef = useRef<boolean>(false)
   const isStaleRef = useRef<boolean>(false)
   const isOutageRecoveryRef = useRef<boolean>(false)
-  const isCurrentFixRejectedRef = useRef<boolean>(false)
   const currentSpeedKmhRef = useRef<number | null>(null)
   const lastSessionStatTimestampRef = useRef<number | null>(null)
+  const lastSessionStatSpeedRef = useRef<number | null>(null)
 
   // HUD Yaşam Döngüsü, Asenkron Yarış ve Fullscreen Koruma Ref'leri
   const hudRequestSeqRef = useRef<number>(0)
   const hudActiveRef = useRef<boolean>(false)
   const hudEnteredFullscreenRef = useRef<boolean>(false)
   const hudLockedOrientationRef = useRef<boolean>(false)
+  const hudClosingRef = useRef<Promise<void> | null>(null)
+  const hudExitingFullscreenRef = useRef<boolean>(false)
 
   useEffect(() => {
     hudActiveRef.current = isHudOpen
@@ -148,37 +160,16 @@ function App() {
     }
 
     const interval = setInterval(() => {
-      // Yalnızca aktif, geçerli hız ölçümü olan, arka planda olmayan ve kesintide olmayan sürelerde sayacı artır
-      const hasValidSpeed = currentSpeedKmhRef.current !== null
-      if (
-        canIncrementMeasurementDuration(
-          gpsStatusRef.current,
-          isPausedRef.current,
-          isStaleRef.current,
-          hasValidSpeed
-        )
-      ) {
-        setElapsedSeconds((prev) => prev + 1)
-
-        // Eğer araç durağan ise (0 km/sa), GPS callback'leri seyrekleşse bile
-        // geçen her 1 saniyelik durağanlık süresi ortalama hız hesabına dahil edilir (ağırlık: 0 km/sa * 1s = 0)
-        if (currentSpeedKmhRef.current === 0) {
-          setSessionStats((prev) => updateSessionStats(prev, 0, 0, 1.0))
-          if (lastSessionStatTimestampRef.current !== null) {
-            lastSessionStatTimestampRef.current += 1000
-          }
-        }
-      }
-
+      const now = Date.now()
       const isStationary = currentSpeedKmhRef.current === 0
 
-      // GPS güncellemeleri kesildiğinde son hızı ekranda tutma, '--' yap
+      // 1. GPS güncellemeleri kesildiğinde son hızı ekranda tutma, '--' yap
       // Durağanken (0 km/sa) tarayıcının güncellemeleri seyreltmesi arıza değildir; esnek eşik kullanılır
       if (
         lastFixTimestampRef.current !== null &&
         isGpsDataStale(
           lastFixTimestampRef.current,
-          Date.now(),
+          now,
           GPS_RELIABILITY_CONFIG.STALE_DATA_TIMEOUT_MS,
           isStationary
         )
@@ -188,6 +179,41 @@ function App() {
         setIsOutageRecovery(true)
         isOutageRecoveryRef.current = true
         setSpeedKmh(null)
+        currentSpeedKmhRef.current = null
+        lastSessionStatTimestampRef.current = null
+        lastSessionStatSpeedRef.current = null
+        return
+      }
+
+      // 2. Yalnızca aktif, geçerli hız ölçümü olan, arka planda olmayan ve kesintide olmayan sürelerde sayacı artır
+      const hasValidSpeed = currentSpeedKmhRef.current !== null
+      if (
+        !canIncrementMeasurementDuration(
+          gpsStatusRef.current,
+          isPausedRef.current,
+          isStaleRef.current,
+          hasValidSpeed
+        )
+      ) {
+        return
+      }
+
+      // 3. Tek ve tutarlı zaman muhasebesi:
+      // Eğer araç durağan ise (0 km/sa) ve mobil tarayıcı GPS callback'lerini seyreltmişse
+      // (son GPS fix'inden bu yana en az 950 ms geçmişse), geçen her 1 saniyelik durağanlık
+      // süresi ortalama hız hesabına tek kez dahil edilir (ağırlık: 0 km/sa * 1s = 0).
+      // GPS callback'i düzenli geliyorsa bu aralık callback tarafından tüketilir; timer mükerrer saymaz.
+      const lastFixTime = lastFixTimestampRef.current ?? 0
+      const isGpsCallbackSparse = now - lastFixTime >= 950
+
+      if (isStationary && isGpsCallbackSparse && lastSessionStatTimestampRef.current !== null) {
+        lastSessionStatTimestampRef.current += 1000
+        lastSessionStatSpeedRef.current = 0
+        setSessionStats((prev) => {
+          const next = updateSessionStats(prev, 0, 0, 1.0, 0)
+          setElapsedSeconds(Math.floor(next.totalDurationSeconds ?? 0))
+          return next
+        })
       }
     }, 1000)
 
@@ -216,6 +242,9 @@ function App() {
           setIsOutageRecovery(true)
           isOutageRecoveryRef.current = true
           setSpeedKmh(null)
+          currentSpeedKmhRef.current = null
+          lastSessionStatTimestampRef.current = null
+          lastSessionStatSpeedRef.current = null
         }
       } else {
         // Uygulama tekrar görünür olduğunda GPS takibini güvenli şekilde devam ettir
@@ -241,6 +270,7 @@ function App() {
       tracker.reset()
       wakeLock.destroy()
       lastCoordsRef.current = null
+      rejectedDistancePointRef.current = null
       lastFixTimestampRef.current = null
     }
   }, [])
@@ -253,15 +283,17 @@ function App() {
 
     trackerRef.current.reset()
     lastCoordsRef.current = null
+    rejectedDistancePointRef.current = null
     lastFixTimestampRef.current = null
     lastSessionStatTimestampRef.current = null
+    lastSessionStatSpeedRef.current = null
     setIsStale(false)
     isStaleRef.current = false
     setIsPaused(false)
     isPausedRef.current = false
     setIsOutageRecovery(false)
     isOutageRecoveryRef.current = false
-    isCurrentFixRejectedRef.current = false
+    setIsCurrentFixRejected(false)
     setSessionStats(resetSessionStats())
     setElapsedSeconds(0)
     setSpeedKmh(null)
@@ -313,6 +345,7 @@ function App() {
           // 1a. Güvenilir olmayan veya geçersiz GPS örneği kontrolü (doğruluk, koordinat, makul timestamp)
           if (!isReliableGpsReading(readingInput, callbackReceivedTime)) {
             // Güvenilmez okuma: güncellik zaman damgası YENİLENMEZ
+            setIsCurrentFixRejected(true)
             setSpeedKmh(null)
             setSpeedSource('none')
             setCurrentAccuracy(null)
@@ -326,6 +359,8 @@ function App() {
                 reason = `Doğruluk kabul sınırını aştı (±${position.coords.accuracy.toFixed(1)}m > ${GPS_RELIABILITY_CONFIG.MAX_ACCEPTABLE_ACCURACY_METERS}m)`
               } else if (!isValidGpsTimestamp(timestamp, callbackReceivedTime)) {
                 reason = 'Geçersiz veya makul olmayan zaman damgası'
+              } else if (timestamp < callbackReceivedTime - GPS_RELIABILITY_CONFIG.MAX_GPS_FIX_AGE_MS) {
+                reason = 'GPS ölçümü callback anına göre çok eski'
               }
 
               gpsDebugLogger.logSample({
@@ -348,6 +383,7 @@ function App() {
           // 1b. Sıralı zaman damgası kontrolü: Tekrar eden veya geriye giden damga sahte hesap yapmadan yoksayılır
           const prevTimestamp = trackerRef.current.getPreviousPoint()?.timestamp
           if (!isValidTimestampSequence(prevTimestamp, timestamp)) {
+            setIsCurrentFixRejected(true)
             if (import.meta.env.DEV) {
               gpsDebugLogger.logSample({
                 timestamp,
@@ -387,11 +423,13 @@ function App() {
             // Kesinti sonrasında Haversine çapa noktası ve hız filtrelerinin geçmiş durumunu temizle
             trackerRef.current.reset()
             lastCoordsRef.current = null
+            rejectedDistancePointRef.current = null
             setIsOutageRecovery(false)
             isOutageRecoveryRef.current = false
           }
 
           // Hız motoru ile hızı hesapla (doğruluk, koordinat ve zaman kontrolleri dahil)
+          const haversineAnchorBefore = trackerRef.current.getHaversineAnchorPoint()
           const result = trackerRef.current.processReading(readingInput)
 
           if (import.meta.env.DEV) {
@@ -435,7 +473,7 @@ function App() {
             isPausedRef.current = false
             setIsOutageRecovery(false)
             isOutageRecoveryRef.current = false
-            isCurrentFixRejectedRef.current = false
+            setIsCurrentFixRejected(false)
             setCurrentAccuracy(
               typeof position.coords.accuracy === 'number' && Number.isFinite(position.coords.accuracy)
                 ? position.coords.accuracy
@@ -452,8 +490,19 @@ function App() {
               accuracy: position.coords.accuracy ?? null,
             }
 
-            if (lastCoordsRef.current) {
-              const dt = (currentPoint.timestamp - lastCoordsRef.current.timestamp) / 1000
+            let reanchoredAfterRejection = false
+            if (rejectedDistancePointRef.current && lastCoordsRef.current) {
+              const fromRejected = calculateHaversineDistance(rejectedDistancePointRef.current, currentPoint)
+              const fromPrevious = calculateHaversineDistance(lastCoordsRef.current, currentPoint)
+              if (fromRejected !== null && fromPrevious !== null && fromRejected <= fromPrevious) {
+                // İkinci okuma uzak konumu doğruladı: reddedilen eski segmenti asla köprüleme.
+                lastCoordsRef.current = currentPoint
+                reanchoredAfterRejection = true
+              }
+              rejectedDistancePointRef.current = null
+            }
+
+            if (!reanchoredAfterRejection && lastCoordsRef.current) {
               const dist = calculateHaversineDistance(lastCoordsRef.current, currentPoint)
               const combinedAccuracy = calculateCombinedAccuracy(
                 lastCoordsRef.current.accuracy,
@@ -463,63 +512,116 @@ function App() {
                 result.source === 'haversine' ? combinedAccuracy : null
               )
 
-              // Mesafe segmenti doğrulama:
-              // - Sabit konum titremesi: mesafe hata payı/eşik altında ise veya araç duruyorsa (0 km/sa) mesafe ekleme
-              // - Makul yer değiştirme kontrolü: mesafe, maksimum araç hızı (250 km/sa) ve doğruluk payı içinde olmalı
-              const isMoving = result.speedKmh > 0
+              // Haversine motoru, doğrulanana kadar küçük hareketleri aynı çapada biriktirir.
+              // Hareket doğrulandıktan sonra yalnız çapadan dışarı doğru ilerleyen küçük adımları say.
+              const previousRadius = haversineAnchorBefore
+                ? calculateHaversineDistance(haversineAnchorBefore, lastCoordsRef.current)
+                : null
+              const currentRadius = haversineAnchorBefore
+                ? calculateHaversineDistance(haversineAnchorBefore, currentPoint)
+                : null
+              const hasHaversineProgress =
+                result.source === 'haversine' && result.speedKmh > 0 &&
+                previousRadius !== null && currentRadius !== null &&
+                currentRadius > previousRadius + 0.1
               const isAboveJitter = dist !== null && dist >= effectiveThreshold - 0.01
+              const isPlausibleDisplacement = isPlausibleDistanceSegment(lastCoordsRef.current, currentPoint, dist)
 
-              const maxRealisticSpeedMs = GPS_RELIABILITY_CONFIG.MAX_REALISTIC_SPEED_KMH / 3.6
-              const maxPlausibleDistance =
-                dt > 0 ? maxRealisticSpeedMs * dt + (combinedAccuracy || 10) * 2 : 0
-
-              const isPlausibleDisplacement = dist !== null && dt > 0 && dist <= maxPlausibleDistance
-
-              if (isMoving && isAboveJitter && isPlausibleDisplacement && dist !== null) {
+              if (result.source === 'haversine' && result.speedKmh === 0) {
+                // Motorun durağanlık/yeniden çapa kararını aynen izle; her 0,5 m adımda çapayı ilerletme.
+                lastCoordsRef.current = trackerRef.current.getHaversineAnchorPoint() ?? lastCoordsRef.current
+              } else if (result.source === 'gps' && result.speedKmh === 0 && isPlausibleDisplacement) {
+                lastCoordsRef.current = currentPoint
+              } else if (result.speedKmh > 0 && (isAboveJitter || hasHaversineProgress) && isPlausibleDisplacement && dist !== null) {
                 deltaMeters = dist
                 lastCoordsRef.current = currentPoint
-              } else if (!isMoving) {
-                // Hareketsizken eşik altındaki küçük sürüklenmelerde çapa güncellenebilir ama mesafe eklenmez
-                if (dist !== null && dist < effectiveThreshold) {
-                  lastCoordsRef.current = currentPoint
-                }
+              } else if (dist !== null && !isPlausibleDisplacement) {
+                // İlk imkânsız koordinat, zaman geçince makul görünerek geriye dönük mesafe üretmesin.
+                rejectedDistancePointRef.current = currentPoint
               }
-            } else {
+            } else if (!reanchoredAfterRejection) {
               lastCoordsRef.current = currentPoint
             }
 
-            // Düzensiz GPS örnekleme aralıkları için zaman farkı (timeDeltaSeconds) hesabı:
+            // Düzensiz GPS örnekleme aralıkları için tek ve tutarlı zaman muhasebesi:
             const maxAllowedGapMs =
               isStationary || result.speedKmh === 0
                 ? GPS_RELIABILITY_CONFIG.STATIONARY_STALE_TIMEOUT_MS
                 : GPS_RELIABILITY_CONFIG.STALE_DATA_TIMEOUT_MS
 
-            const referenceTime = lastSessionStatTimestampRef.current ?? prevTimestamp
-            const timeDeltaSeconds =
-              !needsOutageRecovery &&
-              referenceTime &&
-              timestamp > referenceTime &&
-              timestamp - referenceTime <= maxAllowedGapMs
-                ? (timestamp - referenceTime) / 1000
-                : 1.0
+            const isInitialFix = lastSessionStatTimestampRef.current === null
+            const isRecoveryFix =
+              needsOutageRecovery ||
+              isOutageRecoveryRef.current ||
+              isStaleRef.current ||
+              isPausedRef.current
 
-            lastSessionStatTimestampRef.current = timestamp
+            let timeDeltaSeconds = 0
+            let intervalSpeed = result.speedKmh
 
-            setSessionStats((prev) =>
-              updateSessionStats(prev, result.speedKmh, deltaMeters, timeDeltaSeconds)
-            )
+            if (isInitialFix || isRecoveryFix) {
+              // 3 & 4. İlk GPS örneği veya kesinti sonrası toparlanma örneği:
+              // Yalnızca referans noktası oluşturur; ölçülmemiş hayalî süre eklenmez (dt = 0).
+              timeDeltaSeconds = 0
+              intervalSpeed = result.speedKmh
+              lastSessionStatTimestampRef.current = timestamp
+              lastSessionStatSpeedRef.current = result.speedKmh
+            } else {
+              const referenceTime = lastSessionStatTimestampRef.current!
+              if (timestamp > referenceTime) {
+                const gapMs = timestamp - referenceTime
+                if (gapMs <= maxAllowedGapMs) {
+                  timeDeltaSeconds = gapMs / 1000
+                } else {
+                  // İzin verilen eşiği aşan kesinti aralığında belirsiz zamanı dahil etme
+                  timeDeltaSeconds = 0
+                }
+              } else {
+                // Zaman damgası referenceTime ile aynı veya geride ise, bu aralık
+                // durağanlık timer'ı tarafından zaten tüketilmiştir; çift sayım yapma (dt = 0).
+                timeDeltaSeconds = 0
+              }
+
+              intervalSpeed = lastSessionStatSpeedRef.current ?? result.speedKmh
+              lastSessionStatTimestampRef.current = Math.max(referenceTime, timestamp)
+              lastSessionStatSpeedRef.current = result.speedKmh
+            }
+
+            setSessionStats((prev) => {
+              const next = updateSessionStats(
+                prev,
+                result.speedKmh,
+                deltaMeters,
+                timeDeltaSeconds,
+                intervalSpeed
+              )
+              setElapsedSeconds(Math.floor(next.totalDurationSeconds ?? 0))
+              return next
+            })
           } else if (result.status === 'held' && result.speedKmh !== null) {
             // 2. Reddedilen hız sıçraması (Spike):
             // - Ekranda önceki hız geçici olarak tutulur (kullanıcı deneyimi)
             // - GÜNCELLİK ZAMAN DAMGASI YENİLENMEZ (böylece ardışık retlerde bayatlık koruması çalışır)
-            // - Sıçrayan koordinat kabul edilmez (lastCoordsRef güncellenmez)
+            // - Sıçrayan koordinat mesafe çapası olmaz; uzak nokta doğrulanırsa yeniden referans kurulur
             // - Mesafe, maksimum ve ortalama istatistiklerine ASLA eklenmez
-            isCurrentFixRejectedRef.current = true
+            setIsCurrentFixRejected(true)
             setSpeedSource(result.source)
             setSpeedKmh(result.speedKmh)
+            if (lastCoordsRef.current) {
+              const rejectedPoint: GpsPoint = {
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                timestamp,
+                accuracy: position.coords.accuracy ?? null,
+              }
+              const rejectedDistance = calculateHaversineDistance(lastCoordsRef.current, rejectedPoint)
+              if (!isPlausibleDistanceSegment(lastCoordsRef.current, rejectedPoint, rejectedDistance)) {
+                rejectedDistancePointRef.current = rejectedPoint
+              }
+            }
           } else {
             // 3. İlk okuma veya hesaplanamayan durum
-            isCurrentFixRejectedRef.current = false
+            setIsCurrentFixRejected(result.status === 'rejected')
             setSpeedKmh(null)
             setSpeedSource('none')
             if (result.status === 'initial') {
@@ -559,15 +661,17 @@ function App() {
 
             trackerRef.current.reset()
             lastCoordsRef.current = null
+            rejectedDistancePointRef.current = null
             lastFixTimestampRef.current = null
             lastSessionStatTimestampRef.current = null
+            lastSessionStatSpeedRef.current = null
             setIsStale(false)
             isStaleRef.current = false
             setIsPaused(false)
             isPausedRef.current = false
             setIsOutageRecovery(false)
             isOutageRecoveryRef.current = false
-            isCurrentFixRejectedRef.current = false
+            setIsCurrentFixRejected(false)
             setCurrentAccuracy(null)
             setErrorMessage(message)
             setGpsStatus('hata')
@@ -588,13 +692,15 @@ function App() {
           // Kesinti boyunca sahte hız, mesafe veya süre hesaplanmasını önlemek için referansları sıfırla
           trackerRef.current.reset()
           lastCoordsRef.current = null
+          rejectedDistancePointRef.current = null
           lastFixTimestampRef.current = null
           lastSessionStatTimestampRef.current = null
+          lastSessionStatSpeedRef.current = null
           setIsStale(true)
           isStaleRef.current = true
           setIsOutageRecovery(true)
           isOutageRecoveryRef.current = true
-          isCurrentFixRejectedRef.current = false
+          setIsCurrentFixRejected(false)
           setCurrentAccuracy(null)
           setErrorMessage(message)
           setGpsStatus('bekleniyor')
@@ -612,7 +718,10 @@ function App() {
     } catch {
       trackerRef.current.reset()
       lastCoordsRef.current = null
+      rejectedDistancePointRef.current = null
       lastFixTimestampRef.current = null
+      lastSessionStatTimestampRef.current = null
+      lastSessionStatSpeedRef.current = null
       setIsStale(false)
       isStaleRef.current = false
       setIsPaused(false)
@@ -637,17 +746,55 @@ function App() {
       watchIdRef.current = null
     }
 
+    // 8. Durdur işlemi son geçerli aralığı doğru kapatsın:
+    // Eğer ölçüm aktifken durdurulduysa ve son geçerli aralık henüz kapatılmamışsa,
+    // son referans ile durdurulma anı arasındaki geçerli süreyi (maxGap dahilinde) istatistiklere kapat.
+    if (
+      gpsStatusRef.current === 'aktif' &&
+      !isPausedRef.current &&
+      !isStaleRef.current &&
+      !isOutageRecoveryRef.current &&
+      currentSpeedKmhRef.current !== null &&
+      lastSessionStatTimestampRef.current !== null
+    ) {
+      const now = Date.now()
+      const refTime = lastSessionStatTimestampRef.current
+      const gapMs = now - refTime
+      const isStationary = currentSpeedKmhRef.current === 0
+      const maxGap = isStationary
+        ? GPS_RELIABILITY_CONFIG.STATIONARY_STALE_TIMEOUT_MS
+        : GPS_RELIABILITY_CONFIG.STALE_DATA_TIMEOUT_MS
+
+      if (gapMs >= 100 && gapMs <= maxGap) {
+        const finalDt = gapMs / 1000
+        const intervalSpeed = lastSessionStatSpeedRef.current ?? currentSpeedKmhRef.current
+        setSessionStats((prev) => {
+          const next = updateSessionStats(
+            prev,
+            currentSpeedKmhRef.current,
+            0,
+            finalDt,
+            intervalSpeed
+          )
+          setElapsedSeconds(Math.floor(next.totalDurationSeconds ?? 0))
+          return next
+        })
+      }
+    }
+
     trackerRef.current.reset()
     lastCoordsRef.current = null
+    rejectedDistancePointRef.current = null
     lastFixTimestampRef.current = null
     lastSessionStatTimestampRef.current = null
+    lastSessionStatSpeedRef.current = null
     setIsStale(false)
     isStaleRef.current = false
     setIsPaused(false)
     isPausedRef.current = false
     setIsOutageRecovery(false)
     isOutageRecoveryRef.current = false
-    isCurrentFixRejectedRef.current = false
+    setIsCurrentFixRejected(false)
     setCurrentAccuracy(null)
     setGpsStatus('durduruldu')
     setSpeedKmh(null)
@@ -657,12 +804,12 @@ function App() {
   // Hızı Kaydet Butonu Mantığı (Sprint 6 & V3 Aşama 1)
   const handleSaveSpeed = () => {
     // 1. GPS ölçümü yoksa, geçersizse, bayatlamışsa (stale), arka planda duraklatılmışsa veya reddedilmişse kayıt oluşturma
-    if (!canSaveMeasurement(speedKmh, gpsStatus, isStale, isPaused, isCurrentFixRejectedRef.current)) {
+    if (!canSaveMeasurement(speedKmh, gpsStatus, isStale, isPaused, isCurrentFixRejected)) {
       if (gpsStatus === 'durduruldu') {
         setHistoryNotice(
           'Ölçüm durdurulduğu için hız kaydedilemiyor. Lütfen önce Başlat butonuna basın.'
         )
-      } else if (isCurrentFixRejectedRef.current) {
+      } else if (isCurrentFixRejected) {
         setHistoryNotice(
           'Güvenilir olmayan GPS sıçraması nedeniyle hız kaydedilemiyor.'
         )
@@ -766,116 +913,35 @@ function App() {
   }
 
   // Araç HUD Modu Kapanış Mantığı
-  const handleCloseHud = useCallback(async () => {
+  const handleCloseHud = useCallback(() => {
+    if (!hudActiveRef.current) return hudClosingRef.current ?? Promise.resolve()
+    const previousClosing = hudClosingRef.current
     hudRequestSeqRef.current++
     hudActiveRef.current = false
     setIsHudOpen(false)
 
-    // 1. Tam ekrandan güvenle çık (yalnızca aktif bir fullscreen varsa)
-    try {
-      const isFs = !!(
-        document.fullscreenElement || (document as any).webkitFullscreenElement
-      )
-      if (isFs) {
-        const exitFs =
-          document.exitFullscreen || (document as any).webkitExitFullscreen
-        if (typeof exitFs === 'function') {
-          await exitFs.call(document).catch(() => {})
-        }
-      }
-    } catch {
-      // Sessizce devam et
-    } finally {
-      hudEnteredFullscreenRef.current = false
-    }
-
-    // 2. Yalnızca HUD tarafından kilitlenen ekran yönünü güvenle kaldır
-    try {
-      if (
-        hudLockedOrientationRef.current &&
-        typeof screen !== 'undefined' &&
-        screen.orientation &&
-        typeof (screen.orientation as any).unlock === 'function'
-      ) {
-        screen.orientation.unlock()
-      }
-    } catch {
-      // Sessizce devam et
-    } finally {
-      hudLockedOrientationRef.current = false
-    }
-  }, [])
-
-  // Araç HUD Modu Açılış Mantığı (Asenkron yarış ve yön kilidi korumalı)
-  const handleOpenHud = async () => {
-    const requestId = ++hudRequestSeqRef.current
-    hudActiveRef.current = true
-
-    // 1. Ölçüm henüz başlatılmamışsa mevcut Başlat işlevi ile otomatik başlat
-    if (gpsStatus === 'durduruldu' || gpsStatus === 'hata') {
-      startTracking()
-    }
-
-    setIsHudOpen(true)
-
-    // 2. Tarayıcı destekliyorsa Fullscreen API ile tam ekranı dene
-    try {
-      const elem = document.documentElement
-      const requestFs =
-        elem.requestFullscreen || (elem as any).webkitRequestFullscreen
-      if (typeof requestFs === 'function') {
-        await requestFs.call(elem).catch(() => {})
-        if (
-          document.fullscreenElement ||
-          (document as any).webkitFullscreenElement
-        ) {
-          hudEnteredFullscreenRef.current = true
-        }
-      }
-    } catch {
-      // Fullscreen desteklenmediğinde veya reddedildiğinde (örn. iOS Safari) sessizce devam et
-    }
-
-    // ASENKRON YARIŞ KONTROLÜ (1):
-    // Fullscreen isteği beklerken kullanıcı HUD'ı kapattıysa (veya yeni bir istek geldiyse)
-    // Asla orientation.lock çağırma; açık kalmış olabilecek fullscreen'i derhal bırak ve sonlandır!
-    if (hudRequestSeqRef.current !== requestId || !hudActiveRef.current) {
+    const closing = (async () => {
+      if (previousClosing) await previousClosing
+      // Yeni HUD isteği, bu çıkış tamamlanmadan fullscreen istememeli.
       try {
         const isFs = !!(
           document.fullscreenElement || (document as any).webkitFullscreenElement
         )
         if (isFs) {
-          const exitFs =
-            document.exitFullscreen || (document as any).webkitExitFullscreen
+          const exitFs = document.exitFullscreen || (document as any).webkitExitFullscreen
           if (typeof exitFs === 'function') {
+            hudExitingFullscreenRef.current = true
             await exitFs.call(document).catch(() => {})
           }
         }
       } catch {
         // Sessizce devam et
       } finally {
+        hudExitingFullscreenRef.current = false
         hudEnteredFullscreenRef.current = false
       }
-      return
-    }
 
-    // 3. Destekleniyorsa Screen Orientation API ile landscape yönünü iste
-    try {
-      if (
-        typeof screen !== 'undefined' &&
-        screen.orientation &&
-        typeof (screen.orientation as any).lock === 'function'
-      ) {
-        await (screen.orientation as any).lock('landscape').catch(() => {})
-        hudLockedOrientationRef.current = true
-      }
-    } catch {
-      // Desteklenmeyen veya reddedilen (örn. iOS Safari) durumlarda sessizce devam et
-    }
-
-    // ASENKRON YARIŞ KONTROLÜ (2):
-    // Orientation lock çözülürken kullanıcı HUD'ı kapattıysa yön kilidini derhal geri al
-    if (hudRequestSeqRef.current !== requestId || !hudActiveRef.current) {
+      // Yeni açılış bu kapanışı bekler; burada yalnız önceki HUD'ın yön kilidi vardır.
       try {
         if (
           hudLockedOrientationRef.current &&
@@ -890,7 +956,104 @@ function App() {
       } finally {
         hudLockedOrientationRef.current = false
       }
+    })()
+    hudClosingRef.current = closing
+    void closing.then(() => {
+      if (hudClosingRef.current === closing) hudClosingRef.current = null
+    })
+    return closing
+  }, [])
+
+  // Araç HUD Modu Açılış Mantığı (Asenkron yarış ve yön kilidi korumalı)
+  const handleOpenHud = async () => {
+    const requestId = ++hudRequestSeqRef.current
+    hudActiveRef.current = true
+
+    // 1. Ölçüm henüz başlatılmamışsa mevcut Başlat işlevi ile otomatik başlat
+    if (gpsStatus === 'durduruldu' || gpsStatus === 'hata') {
+      startTracking()
     }
+
+    setIsHudOpen(true)
+
+    // Önceki kapanışın gecikmiş exitFullscreen sonucu yeni isteği kapatamasın.
+    if (hudClosingRef.current) await hudClosingRef.current
+    if (hudRequestSeqRef.current !== requestId || !hudActiveRef.current) return
+
+    // 2. Tarayıcı destekliyorsa Fullscreen API ile tam ekranı dene
+    try {
+      const elem = document.documentElement
+      const requestFs =
+        elem.requestFullscreen || (elem as any).webkitRequestFullscreen
+      if (typeof requestFs === 'function') {
+        await requestFs.call(elem).catch(() => {})
+      }
+    } catch {
+      // Fullscreen desteklenmediğinde veya reddedildiğinde (örn. iOS Safari) sessizce devam et
+    }
+
+    // ASENKRON YARIŞ KONTROLÜ (1):
+    // Fullscreen isteği beklerken kullanıcı HUD'ı kapattıysa (veya yeni bir istek geldiyse)
+    // Yeni HUD açıksa onun fullscreen kaynağına dokunma.
+    if (hudRequestSeqRef.current !== requestId || !hudActiveRef.current) {
+      if (hudActiveRef.current) return
+      try {
+        const isFs = !!(
+          document.fullscreenElement || (document as any).webkitFullscreenElement
+        )
+        if (isFs) {
+          const exitFs =
+            document.exitFullscreen || (document as any).webkitExitFullscreen
+          if (typeof exitFs === 'function') {
+            await exitFs.call(document).catch(() => {})
+          }
+        }
+      } catch {
+        // Sessizce devam et
+      } finally {
+        if (!hudActiveRef.current) hudEnteredFullscreenRef.current = false
+      }
+      return
+    }
+
+    hudEnteredFullscreenRef.current = !!(
+      document.fullscreenElement || (document as any).webkitFullscreenElement
+    )
+
+    // 3. Destekleniyorsa Screen Orientation API ile landscape yönünü iste
+    let orientationLocked = false
+    try {
+      if (
+        typeof screen !== 'undefined' &&
+        screen.orientation &&
+        typeof (screen.orientation as any).lock === 'function'
+      ) {
+        await (screen.orientation as any).lock('landscape')
+        orientationLocked = true
+      }
+    } catch {
+      // Desteklenmeyen veya reddedilen (örn. iOS Safari) durumlarda sessizce devam et
+    }
+
+    // ASENKRON YARIŞ KONTROLÜ (2):
+    // Eski lock sonucu yeni HUD'ın yön kilidini bırakamaz.
+    if (hudRequestSeqRef.current !== requestId || !hudActiveRef.current) {
+      if (hudActiveRef.current) return
+      try {
+        if (
+          orientationLocked &&
+          typeof screen !== 'undefined' &&
+          screen.orientation &&
+          typeof (screen.orientation as any).unlock === 'function'
+        ) {
+          screen.orientation.unlock()
+        }
+      } catch {
+        // Sessizce devam et
+      }
+      return
+    }
+    hudLockedOrientationRef.current = orientationLocked
   }
 
   // Fullscreen Çıkış Yönetimi: Native fullscreen çıkışı veya ESC sonrası durum senkronizasyonu
@@ -901,7 +1064,7 @@ function App() {
       )
       // Kullanıcı tarayıcının native fullscreen çıkışı veya ESC ile çıktığında
       // HUD tam ekran açılmışsa, HUD modal durumu ile tarayıcı durumu tutarlı kalsın.
-      if (!isFullscreenActive && hudActiveRef.current && hudEnteredFullscreenRef.current) {
+      if (!isFullscreenActive && !hudExitingFullscreenRef.current && hudActiveRef.current && hudEnteredFullscreenRef.current) {
         hudEnteredFullscreenRef.current = false
         void handleCloseHud()
       }
@@ -926,13 +1089,15 @@ function App() {
   }
 
   const isTracking = gpsStatus === 'aktif' || gpsStatus === 'bekleniyor'
+  const hasHistory = history.length > 0
 
-  // PWA Güncelleme Yönetimi (V3 Aşama 2 / Görev 6: Madde 21)
+  // PWA Güncelleme Yönetimi (V3 Aşama 2 / Görev 6: Madde 21 & D3)
   const {
     needRefresh: hasPwaUpdate,
     updateServiceWorker,
     dismissUpdate,
-  } = usePwaUpdate(isTracking)
+    otherTabNotice,
+  } = usePwaUpdate(isTracking, hasHistory)
 
   // GPS durum rozeti gösterimi (veri bayatken veya hız üretilemiyorken yanıltıcı "GPS Aktif" gösterilmez)
   const getPillStatus = (): { className: string; label: string } => {
@@ -947,6 +1112,9 @@ function App() {
     }
     if (isStale || speedKmh === null || gpsStatus === 'bekleniyor') {
       return { className: 'status-bekleniyor', label: STATUS_LABELS.bekleniyor }
+    }
+    if (isCurrentFixRejected) {
+      return { className: 'status-bekleniyor', label: 'GPS Doğrulanıyor' }
     }
     return { className: 'status-aktif', label: STATUS_LABELS.aktif }
   }
@@ -1021,27 +1189,30 @@ function App() {
         </div>
       )}
 
-      {/* PWA Güncelleme Bildirimi (Yalnızca ölçüm durdurulmuşken ve yeni sürüm hazır olduğunda) */}
-      {hasPwaUpdate && !isHudOpen && (
+      {/* PWA Güncelleme Bildirimi (Yalnızca ölçüm durdurulmuşken ve yeni sürüm hazır olduğunda veya sekme uyarısında) */}
+      {(hasPwaUpdate || otherTabNotice) && !isHudOpen && (
         <div className="alert-banner alert-pwa-update" role="status" aria-live="polite">
           <div className="pwa-update-content">
             <span className="pwa-update-icon" aria-hidden="true">
-              🚀
+              {otherTabNotice ? '⚠️' : '🚀'}
             </span>
             <span className="pwa-update-text">
-              Yeni sürüm hazır. En son iyileştirmeleri almak için uygulamayı güncelleyebilirsiniz.
+              {otherTabNotice ||
+                'Yeni sürüm hazır. En son iyileştirmeleri almak için uygulamayı güncelleyebilirsiniz.'}
             </span>
           </div>
           <div className="pwa-update-actions">
-            <button
-              type="button"
-              className="btn-pwa-update"
-              onClick={() => {
-                void updateServiceWorker(true)
-              }}
-            >
-              Güncelle
-            </button>
+            {!otherTabNotice && (
+              <button
+                type="button"
+                className="btn-pwa-update"
+                onClick={() => {
+                  void updateServiceWorker(true)
+                }}
+              >
+                Güncelle
+              </button>
+            )}
             <button
               type="button"
               className="btn-pwa-dismiss"
@@ -1160,43 +1331,53 @@ function App() {
           </div>
         </div>
 
-        {/* Hız Modunda Araba Kadranı (Yarım Daire Hız Göstergesi) / Tempo Modunda Dijital Tempo */}
-        {displayMode === 'speed' ? (
-          <SpeedometerGauge
-            speedKmh={speedKmh}
-            speedUnit={speedUnit}
-            isSpeedValid={speedKmh !== null && !isStale && !isPaused && gpsStatus === 'aktif'}
-            formattedSpeed={
-              speedKmh !== null && !isStale && !isPaused
-                ? formatSpeedValue(speedKmh, speedUnit, 0)
-                : '--'
-            }
-            unitLabel={getSpeedUnitLabel(speedUnit)}
-          />
-        ) : (
-          <div className="speed-display-box">
-            <span className="speed-number pace-number">
-              {speedKmh !== null && !isStale && !isPaused
-                ? formatPaceFromKmh(speedKmh)
-                : '--:--'}
-            </span>
-            <span className="speed-unit">min/km</span>
-          </div>
-        )}
-
-        <div className="speed-subtext">
-          {gpsStatus === 'durduruldu' && 'Ölçümü başlatmak için Başlat butonuna basın.'}
-          {gpsStatus === 'bekleniyor' && 'GPS sinyali aranıyor...'}
-          {gpsStatus === 'aktif' && isPaused && 'Uygulama arka planda: Ölçüm duraklatıldı.'}
-          {gpsStatus === 'aktif' && !isPaused && isStale && 'GPS sinyali aranıyor (sinyal bekleniyor)...'}
-          {gpsStatus === 'aktif' && !isPaused && !isStale && isOutageRecovery && 'GPS konumu güncelleniyor...'}
-          {gpsStatus === 'aktif' && !isPaused && !isStale && !isOutageRecovery && speedKmh === null && 'GPS sinyali bekleniyor (hız hesaplanıyor)...'}
-          {gpsStatus === 'aktif' && !isPaused && !isStale && !isOutageRecovery && speedKmh !== null && (
-            <span>
-              Canlı ölçüm güncelleniyor ({speedSource === 'haversine' ? 'Haversine hesabı' : 'GPS donanımı'})
-            </span>
+        <div
+          id="speed-display-panel"
+          className="speed-reading-panel"
+          role="tabpanel"
+          aria-labelledby={displayMode === 'speed' ? 'tab-mode-speed' : 'tab-mode-pace'}
+        >
+          {/* Hız Modunda Araba Kadranı (Yarım Daire Hız Göstergesi) / Tempo Modunda Dijital Tempo */}
+          {displayMode === 'speed' ? (
+            <SpeedometerGauge
+              speedKmh={speedKmh}
+              speedUnit={speedUnit}
+              isSpeedValid={speedKmh !== null && !isStale && !isPaused && gpsStatus === 'aktif'}
+              formattedSpeed={
+                speedKmh !== null && !isStale && !isPaused
+                  ? formatSpeedValue(speedKmh, speedUnit, 0)
+                  : '--'
+              }
+              unitLabel={getSpeedUnitLabel(speedUnit)}
+            />
+          ) : (
+            <div className="speed-display-box">
+              <span className="speed-number pace-number">
+                {speedKmh !== null && !isStale && !isPaused
+                  ? formatPaceFromKmh(speedKmh)
+                  : '--:--'}
+              </span>
+              <span className="speed-unit">min/km</span>
+            </div>
           )}
-          {gpsStatus === 'hata' && 'GPS hatası nedeniyle ölçüm yapılamıyor.'}
+
+          <div className="speed-subtext">
+            {gpsStatus === 'durduruldu' && 'Ölçümü başlatmak için Başlat butonuna basın.'}
+            {gpsStatus === 'bekleniyor' && 'GPS sinyali aranıyor...'}
+            {gpsStatus === 'aktif' && isPaused && 'Uygulama arka planda: Ölçüm duraklatıldı.'}
+            {gpsStatus === 'aktif' && !isPaused && isStale && 'GPS sinyali aranıyor (sinyal bekleniyor)...'}
+            {gpsStatus === 'aktif' && !isPaused && !isStale && isOutageRecovery && 'GPS konumu güncelleniyor...'}
+            {gpsStatus === 'aktif' && !isPaused && !isStale && !isOutageRecovery && isCurrentFixRejected && (
+              speedKmh === null ? 'GPS verisi doğrulanıyor; yeni ölçüm bekleniyor.' : 'GPS verisi doğrulanıyor; son hız gösteriliyor.'
+            )}
+            {gpsStatus === 'aktif' && !isPaused && !isStale && !isOutageRecovery && !isCurrentFixRejected && speedKmh === null && 'GPS sinyali bekleniyor (hız hesaplanıyor)...'}
+            {gpsStatus === 'aktif' && !isPaused && !isStale && !isOutageRecovery && !isCurrentFixRejected && speedKmh !== null && (
+              <span>
+                Canlı ölçüm güncelleniyor ({speedSource === 'haversine' ? 'Haversine hesabı' : 'GPS donanımı'})
+              </span>
+            )}
+            {gpsStatus === 'hata' && 'GPS hatası nedeniyle ölçüm yapılamıyor.'}
+          </div>
         </div>
       </main>
 

@@ -81,6 +81,51 @@ describe('measurementSession Utilities', () => {
       expect(stats.avgSpeedKmh).toBeNull()
       expect(stats.distanceMeters).toBe(25)
     })
+
+    it('dt = 0 olan ilk fix veya toparlanma fixinde süre eklenmez', () => {
+      const stats = updateSessionStats(INITIAL_SESSION_STATS, 36, 0, 0)
+      expect(stats.maxSpeedKmh).toBe(36)
+      expect(stats.avgSpeedKmh).toBeNull()
+      expect(stats.totalDurationSeconds).toBe(0)
+      expect(stats.weightedSpeedSum).toBe(0)
+      expect(stats.speedSamplesCount).toBe(1)
+    })
+
+    it('aralık hızı ve zaman ağırlıklandırması tutarlı sonuç üretir (36 -> 0 -> 20s durma)', () => {
+      // t0: ilk fix 36 km/sa, dt=0
+      let stats = updateSessionStats(INITIAL_SESSION_STATS, 36, 0, 0)
+      expect(stats.totalDurationSeconds).toBe(0)
+
+      // t1: 1s geçti, araç 36 km/sa hızdan 0 km/sa hıza indi
+      // Bu 1 saniyelik aralık boyunca aktif olan hız 36 km/sa idi
+      stats = updateSessionStats(stats, 0, 10, 1, 36)
+      expect(stats.totalDurationSeconds).toBe(1)
+      expect(stats.avgSpeedKmh).toBe(36.0)
+      expect(stats.maxSpeedKmh).toBe(36)
+
+      // t2..t21: 20 saniye boyunca araç durdu (0 km/sa)
+      stats = updateSessionStats(stats, 0, 0, 20, 0)
+      expect(stats.totalDurationSeconds).toBe(21)
+      // Pay = 36 * 1 + 0 * 20 = 36. Payda = 21. Ortalama = 36 / 21 = 1.714 -> 1.7 km/sa
+      expect(stats.avgSpeedKmh).toBe(1.7)
+    })
+
+    it('farklı callback sıklıklarında aynı fiziksel durum için tutarlı ortalama ve süre üretir', () => {
+      // Senaryo A: 10 saniye boyunca her saniye 36 km/sa
+      let statsA = updateSessionStats(INITIAL_SESSION_STATS, 36, 0, 0)
+      for (let i = 0; i < 10; i++) {
+        statsA = updateSessionStats(statsA, 36, 10, 1, 36)
+      }
+
+      // Senaryo B: 10 saniye boyunca tek bir seyrek callback (dt = 10s) 36 km/sa
+      let statsB = updateSessionStats(INITIAL_SESSION_STATS, 36, 0, 0)
+      statsB = updateSessionStats(statsB, 36, 100, 10, 36)
+
+      expect(statsA.totalDurationSeconds).toBe(10)
+      expect(statsB.totalDurationSeconds).toBe(10)
+      expect(statsA.avgSpeedKmh).toBe(36)
+      expect(statsB.avgSpeedKmh).toBe(36)
+    })
   })
 
   describe('resetSessionStats', () => {

@@ -70,7 +70,7 @@ export const PrivacyPolicy: React.FC<PrivacyPolicyProps> = ({
       <main className="privacy-card">
         <h1 className="privacy-title">Gizlilik Politikası ve KVKK Aydınlatma Metni</h1>
         <p className="privacy-subtitle">
-          Son güncelleme: 20 Ekim 2026 • 6698 sayılı Kişisel Verilerin Korunması Kanunu (“KVKK”) Kapsamında
+          Son güncelleme: 21 Ekim 2026 • 6698 sayılı Kişisel Verilerin Korunması Kanunu (“KVKK”) Kapsamında
         </p>
 
         <section className="privacy-section">
@@ -171,15 +171,16 @@ export const PrivacyPolicy: React.FC<PrivacyPolicyProps> = ({
           </p>
           <ul>
             <li>
-              Uygulama ilk açıldığında doğrudan konum izni istenmez. Konum erişimi, yalnızca siz <strong>"Başlat"</strong> butonuna
-              bastığınız anda tarayıcınız tarafından talep edilir.
+              Uygulama ilk açıldığında doğrudan konum izni istenmez. <strong>"Başlat"</strong> butonuna
+              bastığınızda veya ölçüm kapalıyken <strong>"HUD"</strong> modunu açtığınızda tarayıcınız
+              konum izni isteyebilir.
             </li>
             <li>
               Dilediğiniz an <strong>"Durdur"</strong> butonuna basarak canlı GPS takibini anında sonlandırabilirsiniz.
             </li>
             <li>
-              Araç HUD (Head-Up Display) modu yalnızca bir görsel sunum katmanıdır; kendi başına otomatik ölçüm başlatmaz veya
-              ayrı bir konum izleme mekanizması çalıştırmaz.
+              Ölçüm kapalıyken HUD modu açılırsa GPS ölçümü otomatik başlar. Ölçüm zaten açıksa HUD aynı
+              oturumu gösterir; ayrı bir konum izleme mekanizması başlatmaz. HUD'dan çıkmak ölçümü durdurmaz.
             </li>
             <li>
               Tarayıcınızın adres çubuğundaki site ayarları simgesine tıklayarak konum iznini dilediğiniz zaman tamamen engelleyebilir

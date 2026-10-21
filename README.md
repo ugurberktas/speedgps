@@ -1,8 +1,8 @@
 # SpeedGPS 🧭⚡ `v3.0`
 
-Gerçek zamanlı, güvenilir ve gizlilik odaklı modern web tabanlı GPS hız göstergesi (Speedometer), araç HUD ekranı ve rota oturum takip uygulaması.
+Gerçek zamanlı, gizlilik odaklı web tabanlı GPS hız göstergesi (Speedometer), araç HUD ekranı ve rota oturum takip uygulaması.
 
-SpeedGPS; araç sürüşü, bisiklet, koşu veya yürüyüş aktivitelerinde anlık hızınızı, maksimum ve ortalama hızınızı, kat ettiğiniz mesafeyi ve süreyi yüksek doğruluk ve yerel gizlilikle takip etmenizi sağlar.
+SpeedGPS; araç sürüşü, bisiklet, koşu veya yürüyüş aktivitelerinde anlık hızınızı, maksimum ve ortalama hızınızı, kat ettiğiniz mesafeyi ve süreyi cihazdaki GPS verilerine göre, yerel olarak takip etmenizi sağlar.
 
 ---
 
@@ -19,12 +19,13 @@ SpeedGPS; araç sürüşü, bisiklet, koşu veya yürüyüş aktivitelerinde anl
   - Koşu ve yürüyüş sporcuları için kilometre başına harcanan süreyi hesaplayan canlı tempo gösterimi (`min/km`).
 - **Araç HUD Modu (Head-Up Display):**
   - Gece sürüşlerinde telefon ekranını araç ön camına yansıtmak üzere yatay aynalanmış (mirrored), yüksek kontrastlı, saf siyah arka planlı tam ekran sürüş arayüzü.
+  - Ölçüm kapalıyken HUD'a girilirse GPS ölçümü başlar; HUD'dan çıkıldığında oturum sürer.
 - **Sade Ölçüm Butonları & Hızı Kaydet:**
   - Başlangıçta tek, büyük ve erişilebilir turuncu "Başlat" butonu.
   - Ölçüm aktifken soluk/pasif "Başlat" ve belirgin kırmızı "Durdur" düzeni (%50 / %50).
   - Canlı takibi bölmeden ve oturum istatistiklerini sıfırlamadan geçmişe anlık hız ekleyen "Hızı Kaydet" butonu.
 - **Akıllı Gürültü ve Titreme Koruması (Stationary Jitter Protection):**
-  - Masa başında veya kırmızı ışıkta beklerken meydana gelen GPS sapmalarını (örneğin dururken sahte 80+ km/sa sıçramaları veya yapay mesafe artışlarını) engeller.
+  - Masa başında veya kırmızı ışıkta beklerken meydana gelen tekil GPS hız sıçramalarını filtrelemeye çalışır; konum sapmaları mesafe doğruluğunu yine de etkileyebilir.
   - Zayıf doğruluklu (>25m) sıçramaları eler, gerçek 0 km/sa değerini korur.
 - **Kesinti ve Arka Plan Yönetimi (Outage Recovery):**
   - Uygulama arka plana geçtiğinde ölçümü duraklatır.
@@ -34,7 +35,7 @@ SpeedGPS; araç sürüşü, bisiklet, koşu veya yürüyüş aktivitelerinde anl
 - **Konum Kalitesi Göstergesi:**
   - Anlık GPS hata payını (`coords.accuracy`) analiz ederek "İyi (≤10m)", "Orta (10–25m)" ve "Zayıf (>25m)" durumunu kullanıcıya şeffafça gösterir.
 - **Zaman Ağırlıklı Ortalama Hız & İstatistikler:**
-  - GPS örneklerinin düzensiz gelmesi durumunda dahi süreyi ve duraklama anlarını hesaba katan integral tabanlı doğru ortalama hız hesabı.
+  - GPS hız örnekleri ve geçen süre üzerinden zaman ağırlıklı ortalama hız hesabı.
 - **Ölçüm Geçmişi & Özeti Kopyala:**
   - Anlık hız kayıtları, sayaç kontrolü ve hata korumalı tek tıkla panoya metin özeti kopyalama.
 - **Progressive Web App (PWA):**
@@ -75,7 +76,7 @@ Uygulama varsayılan olarak `http://localhost:5173` adresinde çalışacaktır.
 # Vitest birim ve entegrasyon testleri (200+ test)
 npm test
 
-# Playwright E2E UI testleri (32 senaryo - Masaüstü ve Mobil)
+# Playwright E2E UI testleri (61 senaryo, Masaüstü ve Mobil Chromium profillerinde 122 çalıştırma)
 npm run test:e2e
 
 # Linter kontrolü
@@ -91,13 +92,15 @@ npm run build
 
 Tarayıcıların Geolocation API erişim politikası gereği, GPS kullanımı için güvenli bağlantı (HTTPS veya localhost) ve kullanıcı onayı şarttır.
 
+Sayfa açıldığında konum izni istenmez. Ölçümü **Başlat** ile başlattığınızda veya ölçüm kapalıyken **HUD** modunu açtığınızda tarayıcınız konum izni isteyebilir. HUD aynı GPS oturumunu kullanır; HUD'dan çıkmak ölçümü durdurmaz. Takibi bitirmek için **Durdur**'a basın.
+
 ### 📱 iPhone / Safari Kullanımı
-1. Safari üzerinden uygulamayı açtığınızda gelen *"Konumunuza erişmek istiyor"* uyarısına **İzin Ver** deyin.
+1. Safari'de **Başlat**'a basın veya ölçüm kapalıyken **HUD**'ı açın. Konum izni istenirse **İzin Ver** deyin.
 2. Ayarlar > Gizlilik ve Güvenlik > Konum Servisleri > Safari Siteleri bölümünde konumun **Açık** ve mümkünse **Tam Konum** seçili olduğundan emin olun.
 3. Safari paylaşım butonuna basıp **"Ana Ekrana Ekle"** diyerek SpeedGPS'i bağımsız PWA uygulaması olarak yükleyebilirsiniz.
 
 ### 🤖 Android / Chrome Kullanımı
-1. Uygulamayı açtığınızda beliren konum izni istemine **İzin Ver** (Uygulamayı kullanırken) seçeneğini işaretleyin.
+1. Chrome'da **Başlat**'a basın veya ölçüm kapalıyken **HUD**'ı açın. Konum izni istenirse **İzin Ver** (Uygulamayı kullanırken) seçeneğini işaretleyin.
 2. Cihazınızın Konum ayarlarında **"Google Konum Doğruluğu"** modunun açık olması hızlı GPS kilitlenmesi sağlar.
 3. Chrome menüsünden **"Uygulamayı Yükle"** veya **"Ana Ekrana Ekle"** seçeneğiyle PWA olarak kurabilirsiniz.
 

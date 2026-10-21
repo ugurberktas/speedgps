@@ -163,7 +163,8 @@ export function updateSessionStats(
   prevStats: SessionStats,
   currentSpeedKmh: number | null,
   distanceDeltaMeters: number,
-  timeDeltaSeconds?: number
+  timeDeltaSeconds?: number,
+  intervalSpeedKmh?: number | null
 ): SessionStats {
   const validDistanceDelta =
     Number.isFinite(distanceDeltaMeters) && distanceDeltaMeters > 0
@@ -184,11 +185,18 @@ export function updateSessionStats(
       ? Math.max(prevStats.maxSpeedKmh, currentSpeedKmh)
       : currentSpeedKmh
 
-  // Geçerli zaman aralığı (saniye): belirtilmemişse 1.0 saniye (1 Hz) kabul edilir
+  // Geçerli zaman aralığı (saniye):
+  // timeDeltaSeconds açıkça 0 geçilmişse (ilk fix veya recovery fix) 0 olarak kabul edilir.
+  // Tanımsız (undefined) bırakılmışsa geriye dönük test uyumu için 1.0 saniye (1 Hz) kabul edilir.
   const validDt =
-    typeof timeDeltaSeconds === 'number' && Number.isFinite(timeDeltaSeconds) && timeDeltaSeconds > 0
+    typeof timeDeltaSeconds === 'number' && Number.isFinite(timeDeltaSeconds) && timeDeltaSeconds >= 0
       ? timeDeltaSeconds
       : 1.0
+
+  const effectiveIntervalSpeed =
+    typeof intervalSpeedKmh === 'number' && Number.isFinite(intervalSpeedKmh) && intervalSpeedKmh >= 0
+      ? intervalSpeedKmh
+      : currentSpeedKmh
 
   const nextCount = prevStats.speedSamplesCount + 1
   const nextSum = prevStats.speedSamplesSum + currentSpeedKmh
@@ -204,7 +212,7 @@ export function updateSessionStats(
       : prevStats.speedSamplesSum
 
   const nextDuration = prevDuration + validDt
-  const nextWeightedSum = prevWeightedSum + currentSpeedKmh * validDt
+  const nextWeightedSum = prevWeightedSum + effectiveIntervalSpeed * validDt
   const nextAvg = calculateAverageSpeed(nextWeightedSum, nextDuration)
 
   return {

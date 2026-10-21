@@ -143,6 +143,15 @@ export const GPS_RELIABILITY_CONFIG = {
    * fiziksel olarak imkansız/hatalı kabul edilerek reddedilir.
    */
   MAX_FUTURE_TIMESTAMP_DRIFT_MS: 15000,
+
+  /**
+   * Ölçüm anı ile geolocation callback'inin uygulamaya ulaşması arasındaki üst sınır.
+   * 10 saniye, olağan birkaç saniyelik işletim sistemi gecikmesine izin verir;
+   * tünel/arka plan sonrasında gelen eski konumu canlı hız gibi sunmaz.
+   * Bu yalnız callback varış saati bilindiğinde uygulanır. Hız motorunun kendi
+   * zaman farkı ve sıralama hesapları ölçüm timestamp'ini kullanmaya devam eder.
+   */
+  MAX_GPS_FIX_AGE_MS: 10000,
 } as const
 
 /**
@@ -261,6 +270,7 @@ export function isValidGpsTimestamp(
  * 2. Enlem (-90..90) ve boylam (-180..180) sınırları
  * 3. Zaman damgasının pozitif, sonlu ve makul bir sayı olması
  * 4. Konum doğruluğunun (accuracy >= 0) sınırları aşmaması
+ * 5. Callback varış saati verildiyse ölçümün 10 saniyeden eski olmaması
  */
 export function isReliableGpsReading(
   reading: GpsReliabilityCheckInput | null | undefined,
@@ -274,6 +284,13 @@ export function isReliableGpsReading(
   const timestamp = reading.timestamp
 
   if (!isValidGpsTimestamp(timestamp, maxWallTime)) {
+    return false
+  }
+
+  if (
+    maxWallTime !== undefined &&
+    timestamp < maxWallTime - GPS_RELIABILITY_CONFIG.MAX_GPS_FIX_AGE_MS
+  ) {
     return false
   }
 

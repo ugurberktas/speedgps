@@ -17,6 +17,7 @@ describe('GPS Reliability (gpsReliability)', () => {
       expect(GPS_RELIABILITY_CONFIG.MAX_ACCEPTABLE_ACCURACY_METERS).toBe(100)
       expect(GPS_RELIABILITY_CONFIG.STALE_DATA_TIMEOUT_MS).toBe(5000)
       expect(GPS_RELIABILITY_CONFIG.MAX_FUTURE_TIMESTAMP_DRIFT_MS).toBe(15000)
+      expect(GPS_RELIABILITY_CONFIG.MAX_GPS_FIX_AGE_MS).toBe(10000)
     })
   })
 
@@ -61,6 +62,23 @@ describe('GPS Reliability (gpsReliability)', () => {
         timestamp: 1700000000000,
       }
       expect(isReliableGpsReading(validReading)).toBe(true)
+    })
+
+    it('callback varışına göre eski ölçümü reddeder, olağan gecikmeyi ve sınırı kabul eder', () => {
+      const arrival = 1700000000000
+      const reading: GpsReliabilityCheckInput = {
+        coords: { latitude: 41, longitude: 28, accuracy: 5, speed: 0 },
+        timestamp: arrival - 3600000,
+      }
+      expect(isReliableGpsReading(reading, arrival)).toBe(false)
+      reading.timestamp = arrival - 10001
+      expect(isReliableGpsReading(reading, arrival)).toBe(false)
+      reading.timestamp = arrival - 10000
+      expect(isReliableGpsReading(reading, arrival)).toBe(true)
+      reading.timestamp = arrival - 3000
+      expect(isReliableGpsReading(reading, arrival)).toBe(true)
+      reading.timestamp = arrival
+      expect(isReliableGpsReading(reading, arrival)).toBe(true)
     })
 
     it('sınır dışı koordinatları reddeder', () => {
