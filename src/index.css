@@ -8,14 +8,14 @@
   --border-light: #efe8df;
   --border-subtle: #f5efe8;
   
-  --brand-orange: #ff6b00;
-  --brand-orange-hover: #ea580c;
-  --brand-orange-light: #fff4eb;
-  --brand-orange-border: #ffd7b5;
+  --brand-orange: #F97316;
+  --brand-orange-hover: #EA580C;
+  --brand-orange-light: #FFF7ED;
+  --brand-orange-border: #FDBA74;
   
-  --shadow-sm: 0 1px 3px 0 rgba(120, 80, 40, 0.04);
-  --shadow-md: 0 4px 10px -1px rgba(120, 80, 40, 0.05), 0 2px 4px -2px rgba(120, 80, 40, 0.03);
-  --shadow-card: 0 12px 28px -6px rgba(180, 110, 60, 0.08), 0 4px 12px -2px rgba(0, 0, 0, 0.03);
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 10px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.03);
+  --shadow-card: 0 12px 28px -6px rgba(249, 115, 22, 0.08), 0 4px 12px -2px rgba(0, 0, 0, 0.03);
 
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;

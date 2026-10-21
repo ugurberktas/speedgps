@@ -49,11 +49,12 @@ export const SpeedometerGauge: React.FC<SpeedometerGaugeProps> = ({
       >
         <defs>
           <linearGradient id="speedGaugeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#fb923c" />
-            <stop offset="100%" stopColor="#ea580c" />
+            <stop offset="0%" stopColor="#FB923C" />
+            <stop offset="55%" stopColor="#F97316" />
+            <stop offset="100%" stopColor="#EA580C" />
           </linearGradient>
           <filter id="gaugeGlow" x="-15%" y="-15%" width="130%" height="130%">
-            <feDropShadow dx="0" dy="0" stdDeviation="3.5" floodColor="#ea580c" floodOpacity="0.45" />
+            <feDropShadow dx="0" dy="0" stdDeviation="3.5" floodColor="#F97316" floodOpacity="0.4" />
           </filter>
         </defs>
 

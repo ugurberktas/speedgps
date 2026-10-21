@@ -42,13 +42,13 @@
   background-color: var(--brand-orange);
   border-radius: 50%;
   display: inline-block;
-  box-shadow: 0 0 6px rgba(255, 107, 0, 0.4);
+  box-shadow: 0 0 6px rgba(249, 115, 22, 0.45);
 }
 
 .brand-tag {
   font-size: 11px;
   font-weight: 600;
-  color: #ea580c;
+  color: var(--brand-orange-hover);
   background-color: var(--brand-orange-light);
   border: 1px solid var(--brand-orange-border);
   padding: 2px 8px;
@@ -209,9 +209,9 @@
 }
 
 .alert-notice {
-  background-color: #fff7ed;
-  border: 1px solid #ffdec4;
-  color: #c2410c;
+  background-color: var(--brand-orange-light);
+  border: 1px solid var(--brand-orange-border);
+  color: var(--brand-orange-hover);
   justify-content: space-between;
   align-items: center;
 }
@@ -314,7 +314,7 @@
 
 /* Main Card - Speedometer */
 .speed-card {
-  background: radial-gradient(circle at 50% 35%, rgba(255, 246, 237, 0.75) 0%, #ffffff 68%);
+  background: radial-gradient(circle at 50% 35%, rgba(255, 247, 237, 0.75) 0%, #ffffff 68%);
   border: 1px solid var(--border-light);
   border-radius: 28px;
   padding: 24px 20px 28px;
@@ -431,6 +431,7 @@
   border-radius: 999px;
   color: var(--text-secondary);
   background: transparent;
+  border: 1px solid transparent;
   transition: all 0.15s ease;
   line-height: 1.2;
   display: inline-flex;
@@ -445,8 +446,9 @@
 
 .unit-toggle-btn.active {
   background-color: #ffffff;
-  color: #9a3412;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  color: var(--brand-orange-hover);
+  border-color: var(--brand-orange-border);
+  box-shadow: 0 1px 3px rgba(249, 115, 22, 0.12);
 }
 
 .pace-badge-info {
@@ -552,7 +554,7 @@
 .btn-primary-start {
   width: 100%;
   min-height: 54px;
-  background: linear-gradient(135deg, #c2410c 0%, #9a3412 100%);
+  background: linear-gradient(135deg, #FB923C 0%, #F97316 55%, #EA580C 100%);
   color: #ffffff;
   padding: 15px 20px;
   border-radius: 18px;
@@ -563,16 +565,16 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
-  box-shadow: 0 6px 18px rgba(194, 65, 12, 0.32);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 6px 18px rgba(249, 115, 22, 0.35);
   transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, background 0.15s ease;
   cursor: pointer;
 }
 
 .btn-primary-start:hover {
-  background: linear-gradient(135deg, #9a3412 0%, #7c2d12 100%);
+  background: linear-gradient(135deg, #F97316 0%, #EA580C 100%);
   transform: translateY(-1px);
-  box-shadow: 0 8px 22px rgba(194, 65, 12, 0.4);
+  box-shadow: 0 8px 22px rgba(234, 88, 12, 0.42);
 }
 
 .btn-primary-start:active {
@@ -752,24 +754,24 @@
   font-size: 12px;
   font-weight: 700;
   color: #ffffff;
-  background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%);
+  background: linear-gradient(135deg, #FB923C 0%, #F97316 55%, #EA580C 100%);
   border: none;
   padding: 6px 12px;
   min-height: 32px;
   border-radius: 8px;
-  box-shadow: 0 2px 6px rgba(194, 65, 12, 0.25);
+  box-shadow: 0 2px 6px rgba(249, 115, 22, 0.25);
   transition: all 0.15s ease;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
 }
 
 .btn-save-speed:hover {
-  background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+  background: linear-gradient(135deg, #F97316 0%, #EA580C 100%);
   transform: translateY(-1px);
-  box-shadow: 0 3px 8px rgba(194, 65, 12, 0.32);
+  box-shadow: 0 3px 8px rgba(234, 88, 12, 0.35);
 }
 
 .btn-save-speed:active {
@@ -800,7 +802,7 @@
 
 .btn-copy-history:hover:not(:disabled) {
   background-color: #ffedd5;
-  color: #c2410c;
+  color: var(--brand-orange-hover);
 }
 
 .btn-copy-history:disabled {
@@ -861,8 +863,8 @@
 }
 
 .history-item:hover {
-  background-color: #fff6ee;
-  border-color: #ffd7b5;
+  background-color: var(--brand-orange-light);
+  border-color: var(--brand-orange-border);
 }
 
 .history-item-left {
@@ -874,9 +876,9 @@
 .history-id-tag {
   font-size: 12px;
   font-weight: 700;
-  color: #ea580c;
-  background-color: #fff4eb;
-  border: 1px solid #ffe4d0;
+  color: var(--brand-orange-hover);
+  background-color: var(--brand-orange-light);
+  border: 1px solid var(--brand-orange-border);
   padding: 3px 8px;
   border-radius: 8px;
   min-width: 28px;
@@ -1020,12 +1022,12 @@
 }
 
 .debug-btn-download {
-  background-color: #ea580c;
+  background-color: var(--brand-orange);
   color: #ffffff;
 }
 
 .debug-btn-download:hover:not(:disabled) {
-  background-color: #c2410c;
+  background-color: var(--brand-orange-hover);
 }
 
 .debug-btn-clear {
